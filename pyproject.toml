@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "expt_shortensum"
+version = "0.1.0"
+description = ""
+authors = ["yujisw <yuji.1277@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+jupyterlab = "^3.2.1"
+wandb = "^0.12.6"
+rouge-score = "^0.0.4"
+ipywidgets = "^7.6.5"
+datasets = "^1.14.0"
+protobuf = "^3.19.1"
+nltk = "^3.6.5"
+py7zr = "^0.16.3"
+accelerate = "^0.5.1"
+filelock = "^3.4.0"
+transformers = "^4.12.4"
+sentencepiece = "^0.1.96"
+GPUtil = "^1.4.0"
+torch = "^1.8.1"
+py3nvml = "^0.2.6"
+matplotlib = "^3.5.1"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
