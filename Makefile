@@ -1,7 +1,9 @@
+POETRY_RUN := poetry run
+
 TASK=data/cnn_dm
-TOTAL_NUM_UPDATES=20000  
-WARMUP_UPDATES=500      
-LR=3e-05
+TOTAL_NUM_UPDATES=20000
+WARMUP_UPDATES=0
+LR=3e-03
 MAX_TOKENS=2048
 UPDATE_FREQ=128
 PRETRAINED_BASE_PATH=data/bart.base/model.pt
@@ -15,9 +17,11 @@ TRAIN_DEST_DIR = ${OUTPUT_DIR}/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 # TENSORBOARD_LOG_DIR = tensorboard/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 LOG_FILE_PATH = log/${OUTPUT_DIR_PREFIX}_${DATE_INFO}.log
 
+# Command Setting
+CUDA_USE_DEVICES := 0
 
 notebook:
-	poetry run jupyter lab
+	${POETRY_RUN} jupyter lab
 
 bpe-preprocess:
 	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
@@ -27,7 +31,7 @@ bpe-preprocess:
 	wget -N -P temp 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
 	bash data_utils/bpe_preprocess.sh
 	@echo Binarize dataset
-	poetry run fairseq-preprocess \
+	${POETRY_RUN} fairseq-preprocess \
 		--source-lang "source" \
 		--target-lang "target" \
 		--trainpref "${TASK}/train.bpe" \
@@ -41,10 +45,10 @@ bpe-preprocess:
 install:
 	poetry install
 	@echo Installing the correct version for your environment
-	poetry run pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 
 finetune-baseline-large:
-	CUDA_VISIBLE_DEVICES=0 poetry run python train_fairseq/train.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH} \
@@ -71,7 +75,7 @@ finetune-baseline-large:
 
 finetune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large}
-	CUDA_VISIBLE_DEVICES=0 poetry run python train_fairseq/train.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH} \
@@ -96,13 +100,26 @@ finetune-proposal-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 1000 \
-		--no-epoch-checkpoints \
-		--extract-num 100 --freeze-pretrained --use-wandb \
+		--extract-num 256 --use-wandb \
 		> ${LOG_FILE_PATH};
 
+# Usage: make generate-baseline TRAIN_DEST_DIR=hogehoge
 generate-baseline:
+	${eval OUTPUT_DIR_PREFIX := generate-baseline}
 	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
-	CUDA_VISIBLE_DEVICES=0 poetry run python train_fairseq/generate.py \
+	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=1 ${POETRY_RUN} python train_fairseq/generate.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/test.source \
+		--out ${TRAIN_DEST_DIR}/test.hypo
+
+# Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
+generate-proposal:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=1 ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/test.source \
@@ -110,7 +127,7 @@ generate-baseline:
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
-	CUDA_VISIBLE_DEVICES=0 poetry run python train_fairseq/params_tuner.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/params_tuner.py data/cnn_dm-bin \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH} \
