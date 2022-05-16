@@ -7,6 +7,8 @@ import torch
 from fairseq.models.bart import BARTModel
 import argparse
 
+from bart_with_extractor import ProposedModel
+
 XSUM_KWARGS = dict(beam=6, lenpen=1.0, max_len_b=60, min_len=10, no_repeat_ngram_size=3)
 CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram_size=3)
 
@@ -78,24 +80,38 @@ def main():
         default=False,
         help="if true use XSUM_KWARGS else CNN_KWARGS",
     )
+    parser.add_argument(
+        "--use-proposal",
+        action="store_true",
+        default=False,
+        help="if true use ProposedModel else BARTModel",
+    )
     args = parser.parse_args()
     eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
     if args.model_dir == "pytorch/fairseq":
-        bart = torch.hub.load("pytorch/fairseq", args.model_file)
-    else:
-        bart = BARTModel.from_pretrained(
+        model = torch.hub.load("pytorch/fairseq", args.model_file)
+    if args.use_proposal:
+        model = ProposedModel.from_pretrained(
             args.model_dir,
             checkpoint_file=args.model_file,
             data_name_or_path=args.model_dir,
         )
         foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
-        bart.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
+        model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
+    else:
+        model = BARTModel.from_pretrained(
+            args.model_dir,
+            checkpoint_file=args.model_file,
+            data_name_or_path=args.model_dir,
+        )
+        foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
+        model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
 
-    bart = bart.eval()
+    model = model.eval()
     if torch.cuda.is_available():
-        bart = bart.cuda().half()
+        model = model.cuda().half()
     generate(
-        bart, args.src, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
+        model, args.src, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
     )
 
 
