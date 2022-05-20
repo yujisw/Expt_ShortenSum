@@ -3,6 +3,7 @@ log
 output
 wandb
 notebooks
+files2rouge
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

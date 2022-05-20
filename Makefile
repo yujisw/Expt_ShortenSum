@@ -3,11 +3,12 @@ POETRY_RUN := poetry run
 TASK=data/cnn_dm
 TOTAL_NUM_UPDATES=20000
 WARMUP_UPDATES=0
-LR=3e-03
+LR=3e-05
 MAX_TOKENS=2048
 UPDATE_FREQ=128
 PRETRAINED_BASE_PATH=data/bart.base/model.pt
 PRETRAINED_LARGE_PATH=data/bart.large/model.pt
+PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
@@ -22,6 +23,22 @@ CUDA_USE_DEVICES := 0
 
 notebook:
 	${POETRY_RUN} jupyter lab
+
+install:
+	poetry install
+	@echo Installing the correct version for your environment
+	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+
+# if you already have cloned files2rouge repository, comment out "git clone ~~~"
+setup-rouge:
+	${POETRY_RUN} pip install -U git+https://github.com/pltrdy/pyrouge
+	git clone https://github.com/pltrdy/files2rouge.git
+	cd files2rouge/
+	${POETRY_RUN} python setup_rouge.py
+	${POETRY_RUN} python setup.py install
+	cd -
+	wget -N -P data http://nlp.stanford.edu/software/stanford-corenlp-full-2016-10-31.zip
+	unzip data/stanford-corenlp-full-2016-10-31.zip -d data
 
 bpe-preprocess:
 	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
@@ -41,11 +58,6 @@ bpe-preprocess:
 		--workers 60 \
 		--srcdict data/dict.txt \
 		--tgtdict data/dict.txt;
-
-install:
-	poetry install
-	@echo Installing the correct version for your environment
-	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
@@ -124,6 +136,12 @@ generate-proposal:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/test.source \
 		--out ${TRAIN_DEST_DIR}/test.hypo
+
+calc-rouge:
+	export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
+	cat ${TRAIN_DEST_DIR}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/test.hypo.tokenized
+	cat ${TASK}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/test.hypo.tokenized
+	files2rouge ${TRAIN_DEST_DIR}/test.hypo.tokenized ${TASK}/test.hypo.target > ${TRAIN_DEST_DIR}/test.result
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
