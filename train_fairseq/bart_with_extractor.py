@@ -417,9 +417,12 @@ class Extractor(nn.Module):
         inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf"))
         # get indices of top-k high similarity
         topk_high_indices = torch.topk(inner_products, self.extract_num, dim=0).indices
+
         # make transform matrix for extracting important token vecs
         binary_extract_matrix = torch.nn.functional.one_hot(topk_high_indices, num_classes=x.shape[0]).permute(1,2,0).to(x.dtype)
-        binary_extract_matrix = torch.stack([torch.eye(x.size(0)) for i in range(x.size(1))]).to(device=x.device, dtype=x.dtype)
+        # 選択しない場合(デバッグ用)
+        # binary_extract_matrix = torch.stack([torch.eye(x.size(0)) for i in range(x.size(1))]).to(device=x.device, dtype=x.dtype)
+
         # calculate extracted token vecs & new padding mask
         extracted_x = torch.bmm(x.permute(1, 2, 0), binary_extract_matrix).permute(2,0,1) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze()
