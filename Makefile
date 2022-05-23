@@ -25,12 +25,12 @@ CUDA_USE_DEVICES := 0
 notebook:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} jupyter lab
 
-# If you want to use latest version of pytorch, use the command below intead of the 3rd line
+# If you want to use latest version of pytorch for cu113 or cu114, please use the command below intead of the 3rd line
 # ${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 install:
 	poetry install
 	@echo Installing the correct version for your environment
-	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+	${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 
 # if you already have cloned files2rouge repository, comment out "git clone ~~~"
 setup-rouge:
