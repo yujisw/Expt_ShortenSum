@@ -336,6 +336,14 @@ def validate(args, trainer, task, epoch_itr, subsets):
 
         # log validation stats
         stats = get_valid_stats(args, trainer, agg.get_smoothed_values())
+
+        """ Added stats keys modification
+        BEFORE: loss 13.334 | nll_loss 12.557 | ppl 6026.15 | wps 3744 | wpb 177.8 | bsz 2.5 | num_updates 5000
+        AFTER:  val_loss 13.334 | val_nll_loss 12.557 | val_ppl 6026.15 | val_wps 3744 | val_wpb 177.8 | val_bsz 2.5 | num_updates 5000
+        """
+        old_keys = ["loss", "nll_loss", "ppl", "wps", "wpb"]
+        stats = {"val_"+k if k in old_keys else k: v for k,v in stats.items()}
+        
         progress.print(stats, tag=subset, step=trainer.get_num_updates())
         if args.use_wandb:
             wandb.log(stats, step=trainer.get_num_updates())
