@@ -30,7 +30,7 @@ notebook:
 install:
 	poetry install
 	@echo Installing the correct version for your environment
-	${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
+	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 
 # if you already have cloned files2rouge repository, comment out "git clone ~~~"
 setup-rouge:
