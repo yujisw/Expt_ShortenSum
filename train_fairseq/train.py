@@ -341,14 +341,15 @@ def validate(args, trainer, task, epoch_itr, subsets):
         BEFORE: loss 13.334 | nll_loss 12.557 | ppl 6026.15 | wps 3744 | wpb 177.8 | bsz 2.5 | num_updates 5000
         AFTER:  val_loss 13.334 | val_nll_loss 12.557 | val_ppl 6026.15 | val_wps 3744 | val_wpb 177.8 | val_bsz 2.5 | num_updates 5000
         """
-        old_keys = ["loss", "nll_loss", "ppl", "wps", "wpb"]
+        old_keys = ["loss", "nll_loss", "ppl", "wps", "wpb", "bsz"]
         stats = {"val_"+k if k in old_keys else k: v for k,v in stats.items()}
         
         progress.print(stats, tag=subset, step=trainer.get_num_updates())
         if args.use_wandb:
             wandb.log(stats, step=trainer.get_num_updates())
 
-        valid_losses.append(stats[args.best_checkpoint_metric])
+        # Added "val_" because of the keys modification above
+        valid_losses.append(stats["val_"+args.best_checkpoint_metric])
     return valid_losses
 
 
