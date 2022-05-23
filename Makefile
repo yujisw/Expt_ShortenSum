@@ -25,6 +25,8 @@ CUDA_USE_DEVICES := 0
 notebook:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} jupyter lab
 
+# If you want to use latest version of pytorch, use the command below intead of the 3rd line
+# ${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 install:
 	poetry install
 	@echo Installing the correct version for your environment
@@ -34,19 +36,17 @@ install:
 setup-rouge:
 	${POETRY_RUN} pip install -U git+https://github.com/pltrdy/pyrouge
 	git clone https://github.com/pltrdy/files2rouge.git
-	cd files2rouge/
-	${POETRY_RUN} python setup_rouge.py
-	${POETRY_RUN} python setup.py install
-	cd -
+	cd files2rouge && ${POETRY_RUN} python setup_rouge.py
+	cd files2rouge && ${POETRY_RUN} python setup.py install
 	wget -N -P data http://nlp.stanford.edu/software/stanford-corenlp-full-2016-10-31.zip
 	unzip data/stanford-corenlp-full-2016-10-31.zip -d data
 
 bpe-preprocess:
 	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
 	@echo BPE preprocess
-	wget -N -P temp 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
-	wget -N -P temp 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
-	wget -N -P temp 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
+	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
+	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
+	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
 	bash data_utils/bpe_preprocess.sh
 	@echo Binarize dataset
 	${POETRY_RUN} fairseq-preprocess \
