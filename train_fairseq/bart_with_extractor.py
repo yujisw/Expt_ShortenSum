@@ -405,7 +405,7 @@ class Extractor(nn.Module):
         """
 
         if x.size(0) < self.extract_num: # TODO この処理でいいのかはしっかりと調べるべき
-            logger.info(x.shape)
+            # logger.info(x.shape)
             return x, padding_mask
 
         # 文表現を得る
@@ -523,7 +523,7 @@ def proposed_model_large_architecture(args):
     args.encoder_embed_path = getattr(args, "encoder_embed_path", None)
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 1024)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 4 * 1024)
-    args.encoder_layers = getattr(args, "encoder_layers", 12)
+    args.encoder_layers = getattr(args, "encoder_layers", 11)
     args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 16)
     args.encoder_normalize_before = getattr(args, "encoder_normalize_before", False)
     args.encoder_learned_pos = getattr(args, "encoder_learned_pos", True)

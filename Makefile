@@ -2,12 +2,13 @@ POETRY_RUN := poetry run
 
 TASK=data/cnn_dm
 TOTAL_NUM_UPDATES=20000
-WARMUP_UPDATES=0
+WARMUP_UPDATES=16
 LR=3e-05
 MAX_TOKENS=2048
 UPDATE_FREQ=128
 PRETRAINED_BASE_PATH=data/bart.base/model.pt
 PRETRAINED_LARGE_PATH=data/bart.large/model.pt
+PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 # Output data path
@@ -22,7 +23,7 @@ LOG_FILE_PATH = log/${OUTPUT_DIR_PREFIX}_${DATE_INFO}.log
 CUDA_USE_DEVICES := 0
 
 notebook:
-	${POETRY_RUN} jupyter lab
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} jupyter lab
 
 install:
 	poetry install
@@ -59,6 +60,10 @@ bpe-preprocess:
 		--srcdict data/dict.txt \
 		--tgtdict data/dict.txt;
 
+preprocess-extractor:
+	mkdir -p data/bart.with.extractor.large
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_extractor.py
+
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
 		--save-dir ${TRAIN_DEST_DIR} \
@@ -89,8 +94,8 @@ finetune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large}
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
 		--save-dir ${TRAIN_DEST_DIR} \
-		--log-format simple \
-		--restore-file ${PRETRAINED_LARGE_PATH} \
+		--no-progress-bar --log-interval 20 --log-format simple \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
 		--max-tokens ${MAX_TOKENS} \
 		--task translation \
 		--source-lang source --target-lang target \
@@ -111,8 +116,8 @@ finetune-proposal-large:
 		--fp16 --update-freq ${UPDATE_FREQ} \
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
-		--validate-interval-updates 1000 \
-		--extract-num 256 --use-wandb \
+		--validate-interval-updates 200 \
+		--extract-num 1024 --use-wandb \
 		> ${LOG_FILE_PATH};
 
 # Usage: make generate-baseline TRAIN_DEST_DIR=hogehoge
