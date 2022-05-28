@@ -4,6 +4,8 @@ output
 wandb
 notebooks
 files2rouge
+.vscode
+poetry.lock
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

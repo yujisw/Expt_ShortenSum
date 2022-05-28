@@ -128,7 +128,7 @@ generate-baseline:
 	${eval OUTPUT_DIR_PREFIX := generate-baseline}
 	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
-	CUDA_VISIBLE_DEVICES=1 ${POETRY_RUN} python train_fairseq/generate.py \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/test.source \
@@ -139,7 +139,7 @@ generate-proposal:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
-	CUDA_VISIBLE_DEVICES=1 ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/test.source \
@@ -149,7 +149,7 @@ calc-rouge:
 	export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 	cat ${TRAIN_DEST_DIR}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/test.hypo.tokenized
 	cat ${TASK}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/test.hypo.tokenized
-	files2rouge ${TRAIN_DEST_DIR}/test.hypo.tokenized ${TASK}/test.hypo.target > ${TRAIN_DEST_DIR}/test.result
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/test.hypo.tokenized ${TASK}/test.hypo.target > ${TRAIN_DEST_DIR}/test.result
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
