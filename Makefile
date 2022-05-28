@@ -30,7 +30,8 @@ notebook:
 install:
 	poetry install
 	@echo Installing the correct version for your environment
-	${POETRY_RUN} pip install torch==1.8.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+	${POETRY_RUN} pip uninstall torch
+	${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 
 # if you already have cloned files2rouge repository, comment out "git clone ~~~"
 setup-rouge:
@@ -87,7 +88,9 @@ finetune-baseline-large:
 		--lr-scheduler polynomial_decay --lr ${LR} --total-num-update ${TOTAL_NUM_UPDATES} --warmup-updates ${WARMUP_UPDATES} \
 		--fp16 --update-freq ${UPDATE_FREQ} \
 		--skip-invalid-size-inputs-valid-test \
-		--find-unused-parameters --save-interval-updates 10000 \
+		--find-unused-parameters \
+		--validate-interval-updates 200 \
+		 --use-wandb \
 		> ${LOG_FILE_PATH};
 
 finetune-proposal-large:
