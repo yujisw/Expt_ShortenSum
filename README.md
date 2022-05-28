@@ -4,8 +4,25 @@
 
 ## General Data Preprocess
 
+### 0. Install poetry
+Run
+
+```
+curl -sSL https://raw.githubusercontent.com/sdispater/poetry/master/get-poetry.py | python
+echo 'export PATH="$HOME/.poetry/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+poetry -V
+```
+
+*Our scripts are based on poetry.* If you do not want to use poetry, please modify `Makefile` as necessary.
+
 ### 1. Download data
-Download and unzip the `stories` directories from [here](http://cs.nyu.edu/~kcho/DMQA/) for both CNN and Daily Mail.
+Download the `stories` directories from [here](http://cs.nyu.edu/~kcho/DMQA/) for *both CNN and Daily Mail* in `data` directory, and then unzip them with the commands below
+
+```
+tar -xvf data/cnn_stories.tgz -C data
+tar -xvf data/dailymail_stories.tgz -C data
+```
 
 ### 2. Process into .source and .target files
 Run
@@ -24,19 +41,19 @@ The output is now suitable for feeding to the BPE preprocessing step of BART fin
 
 ### 1. Split by length of summaries
 Run
-
+<!-- TODO -->
 ```
 python hogehoge.py /path/to/input/data /path/to/output/data
 ```
 
 ## Training
 
-### 1. Download pre-trained models
+### 1. Download pre-trained models (BART-large)
 Run
 
 ```
-wget -N -P data https://dl.fbaipublicfiles.com/fairseq/models/bart.base.tar.gz
-tar -xzvf data/bart.base.tar.gz -C data
+wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/models/bart.large.tar.gz'
+tar -xvf data/bart.large.tar.gz -C data
 ```
 
 Model | Description | # params | Download
