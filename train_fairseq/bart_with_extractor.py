@@ -402,12 +402,8 @@ class Extractor(nn.Module):
         Output:
             extracted_x: [extract_num, batch_size, embed_dim]
             new_padding_mask: [batch_size, extract_num]
+            ただし、extract_num = min(self.extract_num, seq_len)
         """
-
-        if x.size(0) < self.extract_num: # TODO この処理でいいのかはしっかりと調べるべき
-            # logger.info(x.shape)
-            return x, padding_mask
-
         # 文表現を得る
         sentence_representation = x[
                 src_tokens.permute(1,0).eq(self.eos_idx), :
@@ -416,7 +412,7 @@ class Extractor(nn.Module):
         # calc similarity between each token vec and sentence representation by inner product
         inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf"))
         # get indices of top-k high similarity
-        topk_high_indices = torch.topk(inner_products, self.extract_num, dim=0).indices
+        topk_high_indices = torch.topk(inner_products, min(self.extract_num, x.size(0)), dim=0).indices
 
         # make transform matrix for extracting important token vecs
         binary_extract_matrix = torch.nn.functional.one_hot(topk_high_indices, num_classes=x.shape[0]).permute(1,2,0).to(x.dtype)
@@ -425,7 +421,7 @@ class Extractor(nn.Module):
 
         # calculate extracted token vecs & new padding mask
         extracted_x = torch.bmm(x.permute(1, 2, 0), binary_extract_matrix).permute(2,0,1) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze()
+        new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask
 
     def forward(self, x, src_tokens, encoder_padding_mask, attn_mask: Optional[Tensor] = None):
