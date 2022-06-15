@@ -1,6 +1,7 @@
 POETRY_RUN := poetry run
 
 TASK=data/cnn_dm
+INPUT_DATA_DIR=data/cnn_dm-bin
 TOTAL_NUM_UPDATES=20000
 WARMUP_UPDATES=16
 LR=3e-05
@@ -18,6 +19,8 @@ OUTPUT_DIR_PREFIX := finetune-baseline-large
 TRAIN_DEST_DIR = ${OUTPUT_DIR}/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 # TENSORBOARD_LOG_DIR = tensorboard/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 LOG_FILE_PATH = log/${OUTPUT_DIR_PREFIX}_${DATE_INFO}.log
+
+SPLIT = test
 
 # Command Setting
 CUDA_USE_DEVICES := 0
@@ -61,12 +64,28 @@ bpe-preprocess:
 		--srcdict data/dict.txt \
 		--tgtdict data/dict.txt;
 
+# Rewrite the length range info as necessary.
+split-data-by-length:
+	@echo Split data by length
+	${POETRY_RUN} python data_utils/split_data_by_length.py --upper 49
+	@echo Binarize dataset
+	${POETRY_RUN} fairseq-preprocess \
+		--source-lang "source" \
+		--target-lang "target" \
+		--trainpref "${TASK}/train.-49.bpe" \
+		--validpref "${TASK}/val.-49.bpe" \
+		--testpref "${TASK}/test.-49.bpe" \
+		--destdir "${TASK}.-49-bin/" \
+		--workers 60 \
+		--srcdict data/dict.txt \
+		--tgtdict data/dict.txt;
+
 preprocess-extractor:
 	mkdir -p data/bart.with.extractor.large
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_extractor.py
 
 finetune-baseline-large:
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH} \
@@ -95,7 +114,7 @@ finetune-baseline-large:
 
 finetune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large}
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--no-progress-bar --log-interval 20 --log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
@@ -126,34 +145,34 @@ finetune-proposal-large:
 # Usage: make generate-baseline TRAIN_DEST_DIR=hogehoge
 generate-baseline:
 	${eval OUTPUT_DIR_PREFIX := generate-baseline}
-	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
-	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
-		--src data/cnn_dm/test.source \
-		--out ${TRAIN_DEST_DIR}/test.hypo
+		--src data/cnn_dm/${SPLIT}.source \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
 
 # Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
 generate-proposal:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
-	cp data/cnn_dm-bin/dict.source.txt ${TRAIN_DEST_DIR}/
-	cp data/cnn_dm-bin/dict.target.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
-		--src data/cnn_dm/test.source \
-		--out ${TRAIN_DEST_DIR}/test.hypo
+		--src data/cnn_dm/${SPLIT}.source \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
 
 calc-rouge:
 	export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
-	cat ${TRAIN_DEST_DIR}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/test.hypo.tokenized
-	cat ${TASK}/test.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/test.hypo.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/test.hypo.tokenized ${TASK}/test.hypo.target > ${TRAIN_DEST_DIR}/test.result
+	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo.tokenized
+	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/params_tuner.py data/cnn_dm-bin \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/params_tuner.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH} \
