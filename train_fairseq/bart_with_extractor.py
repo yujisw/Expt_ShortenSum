@@ -413,7 +413,7 @@ class Extractor(nn.Module):
         inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf"))
         # get indices of top-k high similarity
         topk_high_indices = torch.topk(inner_products, min(self.extract_num, x.size(0)), dim=0).indices
-
+        topk_high_indices = torch.sort(topk_high_indices, dim=0).values # restore the original order
         # make transform matrix for extracting important token vecs
         binary_extract_matrix = torch.nn.functional.one_hot(topk_high_indices, num_classes=x.shape[0]).permute(1,2,0).to(x.dtype)
         # 選択しない場合(デバッグ用)
