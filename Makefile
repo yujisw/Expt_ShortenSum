@@ -139,7 +139,7 @@ finetune-proposal-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		--extract-num 1024 --use-wandb \
+		--extract-num 256 --use-wandb \
 		> ${LOG_FILE_PATH};
 
 # Usage: make generate-baseline TRAIN_DEST_DIR=hogehoge
