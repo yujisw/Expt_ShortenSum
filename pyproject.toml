@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "expt_shortensum"
+version = "0.1.0"
+description = ""
+authors = ["yujisw <yuji.1277@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fairseq = "^0.10.2"
+jupyterlab = "^3.3.2"
+optuna = "^2.10.0"
+wandb = "^0.12.14"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
