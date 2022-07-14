@@ -352,9 +352,12 @@ class Extractor(nn.Module):
         logger.info(self.eos_idx)
         logger.info(self.extract_num)
 
+        self.extract = self.extract_by_inner_product
+
         self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
         if self.use_differentiable_topk:
             self.topk_ope = SortedTopK_custom(k=self.extract_num)
+            self.extract = self.extract_by_inner_product_using_differentiable_topk
 
         self.init_weight()
 
@@ -451,7 +454,7 @@ class Extractor(nn.Module):
         # get indices of top-k high similarity
         topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(self.extract_num, x.size(0)))
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
-        masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0))).permute(2,1,0) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask
 
     def forward(self, x, src_tokens, encoder_padding_mask, attn_mask: Optional[Tensor] = None):
@@ -484,7 +487,7 @@ class Extractor(nn.Module):
         #     x = self.self_attn_layer_norm(x)
         
         # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract_by_inner_product(x, src_tokens, encoder_padding_mask)
+        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask)
         residual = extracted_x
 
         x, _ = self.self_attn(

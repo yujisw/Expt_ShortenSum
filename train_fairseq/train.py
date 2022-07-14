@@ -370,6 +370,8 @@ def cli_main(modify_parser=None):
                        help="Freeze pretrained weights (encoder, decoder, and classification_heads)")
     parser.add_argument("--use-wandb", action="store_true",
                        help="Use wandb to monitor training progress")
+    parser.add_argument("--use-differentiable-topk", action="store_true",
+                       help="Use differentiable top-k operator to mask unimportant tokens.")
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.use_wandb:
         wandb.init(project="ShortenSum", entity="yujisw")
