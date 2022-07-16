@@ -23,6 +23,9 @@ def collate(
     pad_to_length=None,
     pad_to_multiple=1,
 ):
+    """
+    samples: おそらくdataset.__getitem__()の返り値
+    """
     if len(samples) == 0:
         return {}
 
@@ -117,6 +120,7 @@ def collate(
         "net_input": {
             "src_tokens": src_tokens,
             "src_lengths": src_lengths,
+            "tgt_lengths": tgt_lengths,
         },
         "target": target,
     }
@@ -165,7 +169,7 @@ def collate(
     return batch
 
 
-class LanguagePairDataset(FairseqDataset):
+class LanguagePairWithTgtLengthDataset(FairseqDataset):
     """
     A pair of torch.utils.data.Datasets.
 
