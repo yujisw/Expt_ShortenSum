@@ -51,7 +51,7 @@ def sorted_sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon):
     inv_mu = 1./(mu.view([1, -1])) # [1, n]
     Kappa = torch.diag_embed(nu_.squeeze(-2)) - torch.matmul(Gamma_.transpose(-1, -2) * inv_mu.unsqueeze(-2), Gamma_) # [bs, k, k]
 
-    inv_Kappa = torch.inverse(Kappa) # [bs, k, k]
+    inv_Kappa = torch.inverse(Kappa+1e-8) # [bs, k, k] # Avoiding zero division error by adding 1e-8.
     
     Gamma_mu = inv_mu.unsqueeze(-1)*Gamma_
     L = Gamma_mu.matmul(inv_Kappa) # [bs, n, k]
@@ -121,12 +121,15 @@ class SortedTopK_custom(torch.nn.Module):
         if torch.cuda.is_available():
             self.anchors = self.anchors.cuda()
     
-    def forward(self, scores, k=None):
+    def forward(self, scores, k=None, epsilon=None):
         if k is not None and k != self.k: # if you changed q_length while forwarding
             self.k = k
             self.anchors = torch.FloatTensor([k-i for i in range(k+1)]).view([1, 1, k+1])
             if torch.cuda.is_available():
                 self.anchors = self.anchors.cuda()
+
+        if epsilon is not None: # if you changed q_length while forwarding
+            self.epsilon = epsilon
 
         bs, n = scores.size()
         scores = scores.view([bs, n, 1])
