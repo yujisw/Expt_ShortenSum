@@ -26,6 +26,8 @@ from torch import Tensor
 
 from fairseq.models.fairseq_encoder import EncoderOut
 
+from differentiable_topk import SortedTopK_custom
+
 logger = logging.getLogger(__name__)
 
 
@@ -350,6 +352,13 @@ class Extractor(nn.Module):
         logger.info(self.eos_idx)
         logger.info(self.extract_num)
 
+        self.extract = self.extract_by_inner_product
+
+        self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
+        if self.use_differentiable_topk:
+            self.topk_ope = SortedTopK_custom(k=self.extract_num)
+            self.extract = self.extract_by_inner_product_using_differentiable_topk
+
         self.init_weight()
 
     def init_weight(self):
@@ -424,6 +433,30 @@ class Extractor(nn.Module):
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask
 
+    def extract_by_inner_product_using_differentiable_topk(self, x, src_tokens, padding_mask):
+        """
+        Input:
+            x: [seq_len, batch_size, embed_dim]
+            src_tokens: [batch_size, seq_len]
+            padding_mask: [batch_size, seq_len]
+        Output:
+            extracted_x: [extract_num, batch_size, embed_dim]
+            new_padding_mask: [batch_size, extract_num]
+            ただし、extract_num = min(self.extract_num, seq_len)
+        """
+        # 文表現を得る
+        sentence_representation = x[
+                src_tokens.permute(1,0).eq(self.eos_idx), :
+            ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
+        # calc similarity between each token vec and sentence representation by inner product
+        # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
+        inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
+        # get indices of top-k high similarity
+        topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(self.extract_num, x.size(0)))
+        # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
+        masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        return masked_x, padding_mask
+
     def forward(self, x, src_tokens, encoder_padding_mask, attn_mask: Optional[Tensor] = None):
         """
         Args:
@@ -454,7 +487,7 @@ class Extractor(nn.Module):
         #     x = self.self_attn_layer_norm(x)
         
         # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract_by_inner_product(x, src_tokens, encoder_padding_mask)
+        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask)
         residual = extracted_x
 
         x, _ = self.self_attn(
