@@ -213,6 +213,19 @@ def train(args, trainer, task, epoch_itr):
     should_stop = False
     num_updates = trainer.get_num_updates()
     for i, samples in enumerate(progress):
+        """
+        samples: {
+            'id': tensor [bsz], 
+            'nsentences': Integer bsz, 
+            'ntokens': Integer ?, 
+            'net_input': {
+                'src_tokens': tensor [bsz, src_length], 
+                'src_lengths': tensor [bsz], 
+                'prev_output_tokens': tensor [bsz, src_length]
+            }, 
+            'target': tensor [bsz, tgt_length]
+        }
+        """
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):

@@ -24,6 +24,7 @@ from fairseq.data import (
 )
 from fairseq.tasks import LegacyFairseqTask, register_task
 
+from .language_pair_with_tgt_length_dataset import LanguagePairWithTgtLengthDataset
 
 EVAL_BLEU_ORDER = 4
 
@@ -31,7 +32,7 @@ EVAL_BLEU_ORDER = 4
 logger = logging.getLogger(__name__)
 
 
-def load_langpair_dataset(
+def load_langpair_with_tgt_length_dataset(
     data_path,
     split,
     src,
@@ -144,7 +145,7 @@ def load_langpair_dataset(
             )
 
     tgt_dataset_sizes = tgt_dataset.sizes if tgt_dataset is not None else None
-    return LanguagePairDataset(
+    return LanguagePairWithTgtLengthDataset(
         src_dataset,
         src_dataset.sizes,
         src_dict,
@@ -161,8 +162,8 @@ def load_langpair_dataset(
     )
 
 
-@register_task("translation")
-class TranslationTask(LegacyFairseqTask):
+@register_task("proposal_task")
+class ProposalTask(LegacyFairseqTask):
     """
     Translate from one (source) language to another (target) language.
 
@@ -293,7 +294,7 @@ class TranslationTask(LegacyFairseqTask):
         # infer langcode
         src, tgt = self.args.source_lang, self.args.target_lang
 
-        self.datasets[split] = load_langpair_dataset(
+        self.datasets[split] = load_langpair_with_tgt_length_dataset(
             data_path,
             split,
             src,

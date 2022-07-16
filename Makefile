@@ -112,6 +112,38 @@ finetune-baseline-large:
 		 --use-wandb \
 		> ${LOG_FILE_PATH};
 
+# CPUで回す場合はfp16オプションを外す
+finetune-proposal-large-on-cpu:
+	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large-on-cpu}
+	CUDA_VISIBLE_DEVICES="" ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
+		--save-dir ${TRAIN_DEST_DIR} \
+		--no-progress-bar --log-interval 20 --log-format simple \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
+		--max-tokens ${MAX_TOKENS} \
+		--task proposal_task \
+		--source-lang source --target-lang target \
+		--truncate-source \
+		--layernorm-embedding \
+		--share-all-embeddings \
+		--share-decoder-input-output-embed \
+		--reset-optimizer --reset-dataloader --reset-meters \
+		--required-batch-size-multiple 1 \
+		--user-dir train_fairseq \
+		--arch proposed_model_large \
+		--criterion label_smoothed_cross_entropy \
+		--label-smoothing 0.1 \
+		--dropout 0.1 --attention-dropout 0.1 \
+		--weight-decay 0.01 --optimizer adam --adam-betas "(0.9, 0.999)" --adam-eps 1e-08 \
+		--clip-norm 0.1 \
+		--lr-scheduler polynomial_decay --lr ${LR} --total-num-update ${TOTAL_NUM_UPDATES} --warmup-updates ${WARMUP_UPDATES} \
+		--update-freq ${UPDATE_FREQ} \
+		--skip-invalid-size-inputs-valid-test \
+		--find-unused-parameters \
+		--validate-interval-updates 200 \
+		--extract-num 1024 --use-differentiable-topk \
+		--use-wandb \
+		> ${LOG_FILE_PATH};
+
 finetune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large}
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
@@ -119,7 +151,7 @@ finetune-proposal-large:
 		--no-progress-bar --log-interval 20 --log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
 		--max-tokens ${MAX_TOKENS} \
-		--task translation \
+		--task proposal_task \
 		--source-lang source --target-lang target \
 		--truncate-source \
 		--layernorm-embedding \

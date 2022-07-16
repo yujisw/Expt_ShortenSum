@@ -80,6 +80,7 @@ class ProposedModel(TransformerModel):
         src_tokens,
         src_lengths,
         prev_output_tokens,
+        tgt_lengths=None, # [bsz] (the same shape as src_lengths)
         features_only=False,
         classification_head_name=None,
         token_embeddings=None,
@@ -100,6 +101,7 @@ class ProposedModel(TransformerModel):
             encoder_out.encoder_out,
             src_tokens,
             encoder_out.encoder_padding_mask,
+            tgt_lengths,
         )
         extractor_out = EncoderOut(
             encoder_out=extractor_out,  # T x B x C
@@ -433,7 +435,7 @@ class Extractor(nn.Module):
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask
 
-    def extract_by_inner_product_using_differentiable_topk(self, x, src_tokens, padding_mask):
+    def extract_by_inner_product_using_differentiable_topk(self, x, src_tokens, padding_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -452,12 +454,12 @@ class Extractor(nn.Module):
         # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
         inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
         # get indices of top-k high similarity
-        topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(self.extract_num, x.size(0)))
+        topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(tgt_lengths.max().item(), x.size(0)))
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask
 
-    def forward(self, x, src_tokens, encoder_padding_mask, attn_mask: Optional[Tensor] = None):
+    def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -469,6 +471,7 @@ class Extractor(nn.Module):
                 `attn_mask[tgt_i, src_j] = 1` means that when calculating the
                 embedding for `tgt_i`, we exclude (mask out) `src_j`. This is
                 useful for strided self-attention.
+            tgt_lengths (LongTensor): long tensor of shape `(batch).`
 
         Returns:
             encoded output of shape `(extract_num, batch, embed_dim)`
@@ -487,7 +490,7 @@ class Extractor(nn.Module):
         #     x = self.self_attn_layer_norm(x)
         
         # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask)
+        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, tgt_lengths)
         residual = extracted_x
 
         x, _ = self.self_attn(
