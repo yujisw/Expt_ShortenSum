@@ -454,7 +454,7 @@ class Extractor(nn.Module):
         # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
         inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
         # get indices of top-k high similarity
-        topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(tgt_lengths.max().item(), x.size(0)))
+        topk_result, _ = self.topk_ope(inner_products.permute(1,0), k=min(tgt_lengths.max().item()*3, x.size(0)))
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask
