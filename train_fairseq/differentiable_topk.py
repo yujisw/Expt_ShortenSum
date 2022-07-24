@@ -111,22 +111,15 @@ class SortedTopKFunc(torch.autograd.Function):
         return grad_C, None, None, None, None
 
 class SortedTopK_custom(torch.nn.Module):
-    def __init__(self, k, epsilon=0.001, max_iter=200):
+    def __init__(self, epsilon=0.001, max_iter=200):
         super(SortedTopK_custom, self).__init__()
-        self.k = k
         self.epsilon = epsilon
-        self.anchors = torch.FloatTensor([k-i for i in range(k+1)]).view([1, 1, k+1])
         self.max_iter = max_iter
-        
+
+    def forward(self, scores, k, epsilon=None):
+        self.anchors = torch.FloatTensor([k-i for i in range(k+1)]).view([1, 1, k+1])
         if torch.cuda.is_available():
             self.anchors = self.anchors.cuda()
-    
-    def forward(self, scores, k=None, epsilon=None):
-        if k is not None and k != self.k: # if you changed q_length while forwarding
-            self.k = k
-            self.anchors = torch.FloatTensor([k-i for i in range(k+1)]).view([1, 1, k+1])
-            if torch.cuda.is_available():
-                self.anchors = self.anchors.cuda()
 
         if epsilon is not None: # if you changed q_length while forwarding
             self.epsilon = epsilon
@@ -147,9 +140,9 @@ class SortedTopK_custom(torch.nn.Module):
         C = C / (C.max().detach()) # Cの最大値を定数化して正規化している()
         
         mu = torch.ones([1, n, 1], requires_grad=False)/n
-        nu = [1./n for _ in range(self.k)]
-        nu.append((n-self.k)/n)
-        nu = torch.FloatTensor(nu).view([1, 1, self.k+1]) # 上位k個とそれ以外でk+1個
+        nu = [1./n for _ in range(k)]
+        nu.append((n-k)/n)
+        nu = torch.FloatTensor(nu).view([1, 1, k+1]) # 上位k個とそれ以外でk+1個
         
         if torch.cuda.is_available():
             mu = mu.cuda()
@@ -157,6 +150,6 @@ class SortedTopK_custom(torch.nn.Module):
         
         Gamma = SortedTopKFunc.apply(C, mu, nu, self.epsilon, self.max_iter)
         
-        A = Gamma[:,:,:self.k]*n # 上位k個に選ばれなかったところは削る
+        A = Gamma[:,:,:k]*n # 上位k個に選ばれなかったところは削る
         
         return A, None
