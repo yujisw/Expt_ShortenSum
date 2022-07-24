@@ -213,6 +213,19 @@ def train(args, trainer, task, epoch_itr):
     should_stop = False
     num_updates = trainer.get_num_updates()
     for i, samples in enumerate(progress):
+        """
+        samples: {
+            'id': tensor [bsz], 
+            'nsentences': Integer bsz, 
+            'ntokens': Integer ?, 
+            'net_input': {
+                'src_tokens': tensor [bsz, src_length], 
+                'src_lengths': tensor [bsz], 
+                'prev_output_tokens': tensor [bsz, src_length]
+            }, 
+            'target': tensor [bsz, tgt_length]
+        }
+        """
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):
@@ -366,14 +379,17 @@ def get_valid_stats(args, trainer, stats):
 
 def cli_main(modify_parser=None):
     parser = options.get_training_parser()
+
+    # Here are the additional arguments for our experiments.
     parser.add_argument("--freeze-pretrained", action="store_true",
                        help="Freeze pretrained weights (encoder, decoder, and classification_heads)")
     parser.add_argument("--use-wandb", action="store_true",
                        help="Use wandb to monitor training progress")
+
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.use_wandb:
         wandb.init(project="ShortenSum", entity="yujisw")
-        wandb.config = vars(args)
+        wandb.config.update(args)
     if args.profile:
         with torch.cuda.profiler.profile():
             with torch.autograd.profiler.emit_nvtx():
