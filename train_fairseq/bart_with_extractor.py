@@ -386,7 +386,7 @@ class Extractor(nn.Module):
             self.alpha_for_extract_num = getattr(args, "alpha_for_extract_num", -1)
             self.beta_for_extract_num = getattr(args, "beta_for_extract_num", -1)
             assert self.alpha_for_extract_num!=-1 and self.beta_for_extract_num!=-1, "Specify ALPHA or BETA when applying a formula to extract_num."
-            logger.info("extract_num are determined by the following fomula.")
+            logger.info("extract_num are determined by the following formula.")
             logger.info("extract_num = {} * target_length + {}".format(self.alpha_for_extract_num, self.beta_for_extract_num))
         else:
             self.extract_num = getattr(args, "extract_num", 0)
