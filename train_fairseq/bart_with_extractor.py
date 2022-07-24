@@ -465,10 +465,10 @@ class Extractor(nn.Module):
                 ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
             # calc similarity between each token vec and sentence representation by inner product
             # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
-            inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
+            inner_products = torch.sum(sentence_representation * x, 2) # [seq_len, batch_size]
             return inner_products
         elif self.token_scoring_fn=="linear":
-            x = self.linear_for_token_scores(x).unsqueeze(-1)
+            x = self.linear_for_token_scores(x).squeeze(-1)
             x = self.activation_for_token_scores(x)
             return x
 
@@ -487,7 +487,7 @@ class Extractor(nn.Module):
         else:
             extract_num = self.extract_num
         # get token's scores
-        token_scores = self.get_token_scores(x, src_tokens, padding_mask) # [seq_len, batch_size]
+        token_scores = self.get_token_scores(x, src_tokens, padding_mask).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_high_indices = torch.topk(token_scores, min(extract_num, x.size(0)), dim=0).indices
         topk_high_indices = torch.sort(topk_high_indices, dim=0).values # restore the original order
