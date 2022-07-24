@@ -171,7 +171,8 @@ finetune-proposal-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		--extract-num 1024 --use-differentiable-topk \
+		--use-differentiable-topk \
+		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
