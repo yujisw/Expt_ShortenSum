@@ -489,7 +489,7 @@ class Extractor(nn.Module):
             extract_num = int(tgt_lengths.max().item() * self.alpha_for_extract_num + self.beta_for_extract_num)
         else:
             extract_num = self.extract_num
-        logger.info("extract_num for this minibatch is {}. (minibatch size is {})".format(extract_num, x.size(1)))
+        # logger.info("extract_num for this minibatch is {}. (minibatch size is {})".format(extract_num, x.size(1)))
         # get token's scores
         token_scores = self.get_token_scores(x, src_tokens, padding_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
