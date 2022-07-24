@@ -173,6 +173,7 @@ finetune-proposal-large:
 		--validate-interval-updates 200 \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
+		--token-scoring-fn "linear" \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 

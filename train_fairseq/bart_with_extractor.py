@@ -66,7 +66,7 @@ class ProposedModel(TransformerModel):
             help="Apply spectral normalization on the classification head",
         )
 
-        # Here are the additional arguments for the Extractor.
+        # Here are the arguments for the Extractor.
         parser.add_argument(
             "--extract-num",
             help="The number of extracted tokens",
@@ -91,6 +91,17 @@ class ProposedModel(TransformerModel):
             "--beta-for-extract-num",
             help="Beta for the formula of extract_num.",
             type=int
+        )
+
+        # Here are the arguments for the extracting method.
+        parser.add_argument(
+            "--token-scoring-fn",
+            choices=[
+                "inner_product",
+                "linear",
+                # "self_attention",
+            ],
+            help="Token scoring function to use for the Extractor.",
         )
 
     @property
@@ -369,16 +380,16 @@ class Extractor(nn.Module):
 
         self.final_layer_norm = LayerNorm(self.embed_dim)
 
-        # Additional arguments
+        # The additional arguments below
         self.eos_idx = eos_idx
         logger.info("eos_idx: {}".format(self.eos_idx))
 
         # settings for the method of extracting
-        self.extract = self.extract_by_inner_product
+        self.extract = self.extract_using_normal_topk
         self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
         if self.use_differentiable_topk:
             self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
-            self.extract = self.extract_by_inner_product_using_differentiable_topk
+            self.extract = self.extract_using_differentiable_topk
 
         # settings for extract_num
         self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
@@ -392,6 +403,13 @@ class Extractor(nn.Module):
             self.extract_num = getattr(args, "extract_num", 0)
             assert self.extract_num!=0, "Specify extract_num when using a fixed value for it. It should be a positive integer."
             logger.info("For different target lengths, extract_num is fixed at {}.".format(self.extract_num))
+
+        # setting for token scoring
+        self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
+        assert self.token_scoring_fn != ""
+        if self.token_scoring_fn=="linear":
+            self.linear_for_token_scores = nn.Linear(self.embed_dim, 1)
+            self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
 
@@ -440,16 +458,21 @@ class Extractor(nn.Module):
         """
         Calculating token's scores using inner product.
         """
-        # 文表現を得る
-        sentence_representation = x[
-                src_tokens.permute(1,0).eq(self.eos_idx), :
-            ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
-        # calc similarity between each token vec and sentence representation by inner product
-        # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
-        inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
-        return inner_products
+        if self.token_scoring_fn=="inner_product":
+            # 文表現を得る
+            sentence_representation = x[
+                    src_tokens.permute(1,0).eq(self.eos_idx), :
+                ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
+            # calc similarity between each token vec and sentence representation by inner product
+            # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
+            inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
+            return inner_products
+        elif self.token_scoring_fn=="linear":
+            x = self.linear_for_token_scores(x).unsqueeze(-1)
+            x = self.activation_for_token_scores(x)
+            return x
 
-    def extract_by_inner_product(self, x, src_tokens, padding_mask, tgt_lengths):
+    def extract_using_normal_topk(self, x, src_tokens, padding_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -475,7 +498,7 @@ class Extractor(nn.Module):
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask
 
-    def extract_by_inner_product_using_differentiable_topk(self, x, src_tokens, padding_mask, tgt_lengths):
+    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
