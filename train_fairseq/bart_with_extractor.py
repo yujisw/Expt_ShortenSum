@@ -421,6 +421,10 @@ class Extractor(nn.Module):
                 q_noise=self.quant_noise,
                 qn_block_size=self.quant_noise_block_size,
             )
+            self.dropout_module_for_token_scores = FairseqDropout(
+                args.dropout, module_name=self.__class__.__name__
+            )
+            self.self_attn_layer_norm_for_token_scores = LayerNorm(self.embed_dim)
             self.linear_for_token_scores = quant_noise(
                 nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
             )
@@ -487,15 +491,26 @@ class Extractor(nn.Module):
             x = self.activation_for_token_scores(x)
             return x
         elif self.token_scoring_fn=="self_attention":
-            x = self.self_attn_for_token_scores(
+            residual = x
+            x, _ = self.self_attn_for_token_scores(
                 query=x,
                 key=x,
                 value=x,
                 key_padding_mask=padding_mask,
                 attn_mask=attn_mask,
-            )
-            x = self.linear_for_token_scores(x).squeeze(-1)
-            x = self.activation_for_token_scores(x)
+            ) # [seq_len, bsz, embed_dim] -> [seq_len, bsz, embed_dim]
+
+            x = self.dropout_module_for_token_scores(x)
+            x = self.residual_connection(x, residual)
+            if not self.normalize_before:
+                x = self.self_attn_layer_norm_for_token_scores(x)
+            residual = x
+            # argsみたらFalseだったからこれはコメントアウト。
+            # if self.normalize_before:
+            #     x = self.final_layer_norm(x)
+
+            x = self.linear_for_token_scores(x).squeeze(-1) # [seq_len, bsz]
+            x = self.activation_for_token_scores(x) # [seq_len, bsz]
             return x
 
     def extract_using_normal_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
@@ -572,17 +587,16 @@ class Extractor(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
-        # argsみたらFalseだったからこれはコメントアウト。residualはextractしたあとのものにする。
-        # residual = x
+        # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
+        x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+        residual = x
+
+        # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
         #     x = self.self_attn_layer_norm(x)
         
-        # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
-        residual = extracted_x
-
         x, _ = self.self_attn(
-            query=extracted_x,
+            query=x,
             key=x,
             value=x,
             key_padding_mask=encoder_padding_mask,
@@ -594,8 +608,9 @@ class Extractor(nn.Module):
             x = self.self_attn_layer_norm(x)
 
         residual = x
-        if self.normalize_before:
-            x = self.final_layer_norm(x)
+        # argsみたらFalseだったからこれはコメントアウト。
+        # if self.normalize_before:
+        #     x = self.final_layer_norm(x)
 
         x = self.activation_fn(self.fc1(x))
         x = self.activation_dropout_module(x)
