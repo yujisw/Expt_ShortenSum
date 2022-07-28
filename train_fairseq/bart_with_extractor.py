@@ -99,7 +99,7 @@ class ProposedModel(TransformerModel):
             choices=[
                 "inner_product",
                 "linear",
-                # "self_attention",
+                "self_attention",
             ],
             help="Token scoring function to use for the Extractor.",
         )
@@ -408,7 +408,22 @@ class Extractor(nn.Module):
         self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
         assert self.token_scoring_fn != ""
         if self.token_scoring_fn=="linear":
-            self.linear_for_token_scores = nn.Linear(self.embed_dim, 1)
+            self.linear_for_token_scores = quant_noise(
+                nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+            )
+            self.activation_for_token_scores = nn.Softmax(dim=0)
+        elif self.token_scoring_fn=="self_attention":
+            self.self_attn_for_token_scores = MultiheadAttention(
+                self.embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
+            self.linear_for_token_scores = quant_noise(
+                nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+            )
             self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
@@ -454,7 +469,7 @@ class Extractor(nn.Module):
                     state_dict["{}.{}.{}".format(name, new, m)] = state_dict[k]
                     del state_dict[k]
 
-    def get_token_scores(self, x, src_tokens, padding_mask):
+    def get_token_scores(self, x, src_tokens, padding_mask, attn_mask):
         """
         Calculating token's scores using inner product.
         """
@@ -471,8 +486,19 @@ class Extractor(nn.Module):
             x = self.linear_for_token_scores(x).squeeze(-1)
             x = self.activation_for_token_scores(x)
             return x
+        elif self.token_scoring_fn=="self_attention":
+            x = self.self_attn_for_token_scores(
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=padding_mask,
+                attn_mask=attn_mask,
+            )
+            x = self.linear_for_token_scores(x).squeeze(-1)
+            x = self.activation_for_token_scores(x)
+            return x
 
-    def extract_using_normal_topk(self, x, src_tokens, padding_mask, tgt_lengths):
+    def extract_using_normal_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -487,7 +513,7 @@ class Extractor(nn.Module):
         else:
             extract_num = self.extract_num
         # get token's scores
-        token_scores = self.get_token_scores(x, src_tokens, padding_mask).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
+        token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_high_indices = torch.topk(token_scores, min(extract_num, x.size(0)), dim=0).indices
         topk_high_indices = torch.sort(topk_high_indices, dim=0).values # restore the original order
@@ -498,7 +524,7 @@ class Extractor(nn.Module):
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask
 
-    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, tgt_lengths):
+    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -514,7 +540,7 @@ class Extractor(nn.Module):
             extract_num = self.extract_num
         # logger.info("extract_num for this minibatch is {}. (minibatch size is {})".format(extract_num, x.size(1)))
         # get token's scores
-        token_scores = self.get_token_scores(x, src_tokens, padding_mask) # [seq_len, batch_size]
+        token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)))
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
@@ -552,7 +578,7 @@ class Extractor(nn.Module):
         #     x = self.self_attn_layer_norm(x)
         
         # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, tgt_lengths)
+        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = extracted_x
 
         x, _ = self.self_attn(
