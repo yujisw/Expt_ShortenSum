@@ -10,6 +10,7 @@ UPDATE_FREQ=128
 PRETRAINED_BASE_PATH=data/bart.base/model.pt
 PRETRAINED_LARGE_PATH=data/bart.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
+PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 # Output data path
@@ -118,7 +119,7 @@ finetune-proposal-large-on-cpu:
 	CUDA_VISIBLE_DEVICES="" ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--no-progress-bar --log-interval 20 --log-format simple \
-		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
 		--max-tokens ${MAX_TOKENS} \
 		--task proposal_task \
 		--source-lang source --target-lang target \
@@ -140,7 +141,9 @@ finetune-proposal-large-on-cpu:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		--extract-num 1024 --use-differentiable-topk \
+		--use-differentiable-topk \
+		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
+		--token-scoring-fn "linear" \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -149,7 +152,7 @@ finetune-proposal-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--no-progress-bar --log-interval 20 --log-format simple \
-		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
 		--max-tokens ${MAX_TOKENS} \
 		--task proposal_task \
 		--source-lang source --target-lang target \
@@ -193,10 +196,11 @@ generate-proposal:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
+		--desired-length data/desired_lengths/test.oracle \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
 
 calc-rouge:

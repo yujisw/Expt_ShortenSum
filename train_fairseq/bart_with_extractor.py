@@ -7,7 +7,9 @@ BART: Denoising Sequence-to-Sequence Pre-training for
 Natural Language Generation, Translation, and Comprehension
 """
 
+import copy
 import logging
+from typing import List, Dict
 from numpy import extract, inner
 
 import torch
@@ -17,7 +19,7 @@ from fairseq.models import register_model, register_model_architecture
 from fairseq.models.transformer import TransformerModel
 from fairseq.modules.transformer_sentence_encoder import init_bert_params
 
-from fairseq.models.bart.hub_interface import BARTHubInterface
+# from fairseq.models.bart.hub_interface import BARTHubInterface
 
 from typing import Optional
 from fairseq.modules import LayerNorm, MultiheadAttention
@@ -28,6 +30,7 @@ from torch import Tensor
 from fairseq.models.fairseq_encoder import EncoderOut
 
 from differentiable_topk import SortedTopK_custom
+from my_hub_interface import MyHubInterface
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +46,10 @@ class ProposedModel(TransformerModel):
 
         self.classification_heads = nn.ModuleDict()
 
-        logger.info(self.encoder.dictionary.eos())
-        self.extractor = Extractor(args, self.encoder.dictionary.eos())
+        logger.info("encoder dictionary eos: {}".format(self.encoder.dictionary.eos()))
+
+        extractor = Extractor(args, self.encoder.dictionary.eos())
+        self.encoder = Encoder_Extractor(args, encoder, extractor)
 
     @staticmethod
     def add_args(parser):
@@ -101,6 +106,7 @@ class ProposedModel(TransformerModel):
                 "linear",
                 "self_attention",
             ],
+            default="inner_product",
             help="Token scoring function to use for the Extractor.",
         )
 
@@ -125,29 +131,14 @@ class ProposedModel(TransformerModel):
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
+            tgt_lengths=tgt_lengths,
             token_embeddings=token_embeddings,
             **kwargs,
         )
 
-        # ここに提案手法を組み込む
-        extractor_out, new_padding_mask = self.extractor(
-            encoder_out.encoder_out,
-            src_tokens,
-            encoder_out.encoder_padding_mask,
-            tgt_lengths,
-        )
-        extractor_out = EncoderOut(
-            encoder_out=extractor_out,  # T x B x C
-            encoder_padding_mask=new_padding_mask,  # B x T
-            encoder_embedding=encoder_out.encoder_embedding,  # B x T x C
-            encoder_states=encoder_out.encoder_states,  # List[T x B x C]
-            src_tokens=None,
-            src_lengths=None,
-        )
-
         x, extra = self.decoder(
             prev_output_tokens,
-            encoder_out=extractor_out,
+            encoder_out=encoder_out,
             features_only=features_only,
             **kwargs,
         )
@@ -162,7 +153,7 @@ class ProposedModel(TransformerModel):
         return x, extra
 
     @classmethod
-    def from_pretrained( # この関数は訓練時には呼ばれていないっぽい
+    def from_pretrained( # この関数は訓練時には呼ばれず、generate時に呼ばれる。
         cls,
         model_name_or_path,
         checkpoint_file="model.pt",
@@ -170,7 +161,6 @@ class ProposedModel(TransformerModel):
         bpe="gpt2",
         **kwargs,
     ):
-        logger.info("PrintDebug: ProposedModel from_pretrained called.")
         from fairseq import hub_utils
 
         # Load args, task, and models from trained checkpoint
@@ -183,7 +173,7 @@ class ProposedModel(TransformerModel):
             load_checkpoint_heads=True,
             **kwargs,
         )
-        return BARTHubInterface(x["args"], x["task"], x["models"][0])
+        return MyHubInterface(x["args"], x["task"], x["models"][0])
 
     def register_classification_head(
         self, name, num_classes=None, inner_dim=None, **kwargs
@@ -265,57 +255,58 @@ class ProposedModel(TransformerModel):
 
         # When finetuning on translation task, remove last row of
         # embedding matrix that corresponds to mask_idx token.
-        loaded_dict_size = state_dict["encoder.embed_tokens.weight"].size(0)
+        loaded_dict_size = state_dict["encoder.encoder.embed_tokens.weight"].size(0)
         if (
             loaded_dict_size == len(self.encoder.dictionary) + 1
             and "<mask>" not in self.encoder.dictionary
         ):
-            truncate_emb("encoder.embed_tokens.weight")
+            truncate_emb("encoder.encoder.embed_tokens.weight")
             truncate_emb("decoder.embed_tokens.weight")
-            truncate_emb("encoder.output_projection.weight")
+            truncate_emb("encoder.encoder.output_projection.weight")
             truncate_emb("decoder.output_projection.weight")
 
         # When continued pretraining on new set of languages for mbart,
         # add extra lang embeddings at the end of embed_tokens.
         # Note: newly added languages are assumed to have been added at the end.
-        if self.args.task == "multilingual_denoising" and loaded_dict_size < len(
-            self.encoder.dictionary
-        ):
-            logger.info(
-                "Adding extra language embeddings not found in pretrained model for "
-                "continued pretraining of MBART on new set of languages."
-            )
-            loaded_mask_token_embedding = state_dict["encoder.embed_tokens.weight"][
-                -1, :
-            ]
+        # ここは multilingual_denoisingやらないから呼ばれない。ややこしいのでコメントアウト。
+        # if self.args.task == "multilingual_denoising" and loaded_dict_size < len(
+        #     self.encoder.dictionary
+        # ):
+        #     logger.info(
+        #         "Adding extra language embeddings not found in pretrained model for "
+        #         "continued pretraining of MBART on new set of languages."
+        #     )
+        #     loaded_mask_token_embedding = state_dict["encoder.embed_tokens.weight"][
+        #         -1, :
+        #     ]
 
-            num_langids_to_add = len(self.encoder.dictionary) - loaded_dict_size
-            embed_dim = state_dict["encoder.embed_tokens.weight"].size(1)
+        #     num_langids_to_add = len(self.encoder.dictionary) - loaded_dict_size
+        #     embed_dim = state_dict["encoder.embed_tokens.weight"].size(1)
 
-            new_lang_embed_to_add = torch.zeros(num_langids_to_add, embed_dim)
-            nn.init.normal_(new_lang_embed_to_add, mean=0, std=embed_dim ** -0.5)
-            new_lang_embed_to_add = new_lang_embed_to_add.to(
-                dtype=state_dict["encoder.embed_tokens.weight"].dtype,
-            )
+        #     new_lang_embed_to_add = torch.zeros(num_langids_to_add, embed_dim)
+        #     nn.init.normal_(new_lang_embed_to_add, mean=0, std=embed_dim ** -0.5)
+        #     new_lang_embed_to_add = new_lang_embed_to_add.to(
+        #         dtype=state_dict["encoder.embed_tokens.weight"].dtype,
+        #     )
 
-            state_dict["encoder.embed_tokens.weight"] = torch.cat(
-                [
-                    state_dict["encoder.embed_tokens.weight"][
-                        : loaded_dict_size - 1, :
-                    ],
-                    new_lang_embed_to_add,
-                    loaded_mask_token_embedding.unsqueeze(0),
-                ]
-            )
-            state_dict["decoder.embed_tokens.weight"] = torch.cat(
-                [
-                    state_dict["decoder.embed_tokens.weight"][
-                        : loaded_dict_size - 1, :
-                    ],
-                    new_lang_embed_to_add,
-                    loaded_mask_token_embedding.unsqueeze(0),
-                ]
-            )
+        #     state_dict["encoder.embed_tokens.weight"] = torch.cat(
+        #         [
+        #             state_dict["encoder.embed_tokens.weight"][
+        #                 : loaded_dict_size - 1, :
+        #             ],
+        #             new_lang_embed_to_add,
+        #             loaded_mask_token_embedding.unsqueeze(0),
+        #         ]
+        #     )
+        #     state_dict["decoder.embed_tokens.weight"] = torch.cat(
+        #         [
+        #             state_dict["decoder.embed_tokens.weight"][
+        #                 : loaded_dict_size - 1, :
+        #             ],
+        #             new_lang_embed_to_add,
+        #             loaded_mask_token_embedding.unsqueeze(0),
+        #         ]
+        #     )
 
         # Copy any newly-added classification heads into the state dict
         # with their current weights.
@@ -326,6 +317,75 @@ class ProposedModel(TransformerModel):
                     logger.info("Overwriting", prefix + "classification_heads." + k)
                     state_dict[prefix + "classification_heads." + k] = v
 
+class Encoder_Extractor(nn.Module):
+    def __init__(self, args, encoder, extractor):
+        super().__init__()
+        self.args = args
+        self.encoder = encoder
+        self.extractor = extractor
+        self.dictionary = encoder.dictionary
+        self.reorder_encoder_out = encoder.reorder_encoder_out
+
+    def max_positions(self):
+        """Return the max input length allowed by the task."""
+        return None
+
+    def forward_torchscript(self, net_input: Dict[str, Tensor]):
+        """A TorchScript-compatible version of forward.
+
+        Encoders which use additional arguments may want to override
+        this method for TorchScript compatibility.
+        """
+        if torch.jit.is_scripting():
+            return self.forward(
+                src_tokens=net_input["src_tokens"],
+                src_lengths=net_input["src_lengths"],
+                tgt_lengths=net_input["tgt_lengths"],
+            )
+        else:
+            return self.forward_non_torchscript(net_input)
+
+    @torch.jit.unused
+    def forward_non_torchscript(self, net_input: Dict[str, Tensor]):
+        encoder_input = {
+            k: v for k, v in net_input.items() if k != "prev_output_tokens"
+        }
+        return self.forward(**encoder_input)
+
+    def forward(
+        self,
+        src_tokens,
+        src_lengths,
+        tgt_lengths=None, # [bsz] (the same shape as src_lengths)
+        token_embeddings=None,
+        **kwargs,
+    ):
+        # if classification_head_name is not None:
+        #     features_only = True
+
+        encoder_out = self.encoder(
+            src_tokens,
+            src_lengths=src_lengths,
+            token_embeddings=token_embeddings,
+            **kwargs,
+        )
+
+        # ここに提案手法を組み込む
+        extractor_out, new_padding_mask = self.extractor(
+            encoder_out.encoder_out,
+            src_tokens,
+            encoder_out.encoder_padding_mask,
+            tgt_lengths,
+        )
+        extractor_out = EncoderOut(
+            encoder_out=extractor_out,  # T x B x C
+            encoder_padding_mask=new_padding_mask,  # B x T
+            encoder_embedding=encoder_out.encoder_embedding,  # B x T x C
+            encoder_states=encoder_out.encoder_states,  # List[T x B x C]
+            src_tokens=None,
+            src_lengths=None,
+        )
+        return extractor_out
 
 class Extractor(nn.Module):
     """Encoder layer block.
