@@ -206,7 +206,7 @@ generate-proposal:
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
-		--desired-length data/desired_lengths/test.oracle \
+		--desired-length data/desired_lengths/${SPLIT}.oracle \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
 
 calc-rouge:
