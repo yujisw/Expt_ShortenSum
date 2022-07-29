@@ -85,6 +85,10 @@ preprocess-extractor:
 	mkdir -p data/bart.with.extractor.large
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_extractor.py
 
+preprocess-proposal:
+	mkdir -p data/bart.extractor.in.encoder.large
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_proposal.py
+
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
