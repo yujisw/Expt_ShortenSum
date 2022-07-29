@@ -88,6 +88,8 @@ preprocess-extractor:
 preprocess-proposal:
 	mkdir -p data/bart.extractor.in.encoder.large
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_proposal.py
+	mkdir -p data/desired_lengths
+	${POETRY_RUN} python data_utils/make_oracle_length_data.py
 
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
