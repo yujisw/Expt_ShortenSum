@@ -204,10 +204,10 @@ generate-proposal:
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
-		--model-file checkpoint_best.pt \
+		--model-file checkpoint_best_renamed.pt \
 		--src data/cnn_dm/${SPLIT}.source \
-		--desired-length data/desired_lengths/${SPLIT}.oracle \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}
 
 calc-rouge:
 	export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
