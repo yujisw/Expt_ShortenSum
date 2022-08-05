@@ -97,6 +97,17 @@ class ProposedModel(TransformerModel):
             help="Beta for the formula of extract_num.",
             type=int
         )
+        parser.add_argument(
+            "--when-to-extract",
+            choices=[
+                "before_attention",
+                "after_attention",
+                "after_fc",
+            ],
+            default="before_attention",
+            help="When the model extracts.",
+        )
+
 
         # Here are the arguments for the extracting method.
         parser.add_argument(
@@ -106,7 +117,7 @@ class ProposedModel(TransformerModel):
                 "linear",
                 "self_attention",
             ],
-            default="inner_product",
+            default="self_attention",
             help="Token scoring function to use for the Extractor.",
         )
 
@@ -448,8 +459,15 @@ class Extractor(nn.Module):
         self.extract = self.extract_using_normal_topk
         self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
         if self.use_differentiable_topk:
+            logger.info("Use differentiable top-k operator.")
             self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
             self.extract = self.extract_using_differentiable_topk
+        else:
+            logger.info("Use normal top-k operator (not differentiable).")
+            self.extract = self.extract_using_normal_topk
+        self.when_to_extract = getattr(args, "when_to_extract", "")
+        assert self.when_to_extract != ""
+        logger.info("Extract {}".format(self.when_to_extract))
 
         # settings for extract_num
         self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
@@ -467,6 +485,7 @@ class Extractor(nn.Module):
         # setting for token scoring
         self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
         assert self.token_scoring_fn != ""
+        logger.info("Calculate token's scores with {}".format(self.token_scoring_fn))
         if self.token_scoring_fn=="linear":
             self.linear_for_token_scores = quant_noise(
                 nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
@@ -647,8 +666,8 @@ class Extractor(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
-        # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+        if self.when_to_extract == "before_attention":
+            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
 
         # argsみたらFalseだったからこれはコメントアウト。
@@ -667,6 +686,8 @@ class Extractor(nn.Module):
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
+        if self.when_to_extract == "after_attention":
+            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
         # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
@@ -679,6 +700,10 @@ class Extractor(nn.Module):
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
+
+        if self.when_to_extract == "after_fc":
+            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+
         return x, new_padding_mask
 
 
