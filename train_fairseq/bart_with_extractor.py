@@ -31,6 +31,7 @@ from fairseq.models.fairseq_encoder import EncoderOut
 
 from differentiable_topk import SortedTopK_custom
 from my_hub_interface import MyHubInterface
+from soft_topk_attention import SoftTopKMultiHeadAttention
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class ProposedModel(TransformerModel):
             "--when-to-extract",
             choices=[
                 "before_attention",
+                "during_attention",
                 "after_attention",
                 "after_fc",
             ],
@@ -456,58 +458,61 @@ class Extractor(nn.Module):
         logger.info("eos_idx: {}".format(self.eos_idx))
 
         # settings for the method of extracting
-        self.extract = self.extract_using_normal_topk
-        self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
-        if self.use_differentiable_topk:
-            logger.info("Use differentiable top-k operator.")
-            self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
-            self.extract = self.extract_using_differentiable_topk
-        else:
-            logger.info("Use normal top-k operator (not differentiable).")
-            self.extract = self.extract_using_normal_topk
         self.when_to_extract = getattr(args, "when_to_extract", "")
         assert self.when_to_extract != ""
         logger.info("Extract {}".format(self.when_to_extract))
-
-        # settings for extract_num
-        self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
-        if self.apply_formula_to_extract_num:
-            self.alpha_for_extract_num = getattr(args, "alpha_for_extract_num", -1)
-            self.beta_for_extract_num = getattr(args, "beta_for_extract_num", -1)
-            assert self.alpha_for_extract_num!=-1 and self.beta_for_extract_num!=-1, "Specify ALPHA or BETA when applying a formula to extract_num."
-            logger.info("extract_num are determined by the following formula.")
-            logger.info("extract_num = {} * target_length + {}".format(self.alpha_for_extract_num, self.beta_for_extract_num))
+        if self.when_to_extract == "during_attention":
+            pass
         else:
-            self.extract_num = getattr(args, "extract_num", 0)
-            assert self.extract_num!=0, "Specify extract_num when using a fixed value for it. It should be a positive integer."
-            logger.info("For different target lengths, extract_num is fixed at {}.".format(self.extract_num))
+            self.extract = self.extract_using_normal_topk
+            self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
+            if self.use_differentiable_topk:
+                logger.info("Use differentiable top-k operator.")
+                self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
+                self.extract = self.extract_using_differentiable_topk
+            else:
+                logger.info("Use normal top-k operator (not differentiable).")
+                self.extract = self.extract_using_normal_topk
 
-        # setting for token scoring
-        self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
-        assert self.token_scoring_fn != ""
-        logger.info("Calculate token's scores with {}".format(self.token_scoring_fn))
-        if self.token_scoring_fn=="linear":
-            self.linear_for_token_scores = quant_noise(
-                nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
-            )
-            self.activation_for_token_scores = nn.Softmax(dim=0)
-        elif self.token_scoring_fn=="self_attention":
-            self.self_attn_for_token_scores = MultiheadAttention(
-                self.embed_dim,
-                args.encoder_attention_heads,
-                dropout=args.attention_dropout,
-                self_attention=True,
-                q_noise=self.quant_noise,
-                qn_block_size=self.quant_noise_block_size,
-            )
-            self.dropout_module_for_token_scores = FairseqDropout(
-                args.dropout, module_name=self.__class__.__name__
-            )
-            self.self_attn_layer_norm_for_token_scores = LayerNorm(self.embed_dim)
-            self.linear_for_token_scores = quant_noise(
-                nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
-            )
-            self.activation_for_token_scores = nn.Softmax(dim=0)
+            # settings for extract_num
+            self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
+            if self.apply_formula_to_extract_num:
+                self.alpha_for_extract_num = getattr(args, "alpha_for_extract_num", -1)
+                self.beta_for_extract_num = getattr(args, "beta_for_extract_num", -1)
+                assert self.alpha_for_extract_num!=-1 and self.beta_for_extract_num!=-1, "Specify ALPHA or BETA when applying a formula to extract_num."
+                logger.info("extract_num are determined by the following formula.")
+                logger.info("extract_num = {} * target_length + {}".format(self.alpha_for_extract_num, self.beta_for_extract_num))
+            else:
+                self.extract_num = getattr(args, "extract_num", 0)
+                assert self.extract_num!=0, "Specify extract_num when using a fixed value for it. It should be a positive integer."
+                logger.info("For different target lengths, extract_num is fixed at {}.".format(self.extract_num))
+
+            # setting for token scoring
+            self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
+            assert self.token_scoring_fn != ""
+            logger.info("Calculate token's scores with {}".format(self.token_scoring_fn))
+            if self.token_scoring_fn=="linear":
+                self.linear_for_token_scores = quant_noise(
+                    nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+                )
+                self.activation_for_token_scores = nn.Softmax(dim=0)
+            elif self.token_scoring_fn=="self_attention":
+                self.self_attn_for_token_scores = MultiheadAttention(
+                    self.embed_dim,
+                    args.encoder_attention_heads,
+                    dropout=args.attention_dropout,
+                    self_attention=True,
+                    q_noise=self.quant_noise,
+                    qn_block_size=self.quant_noise_block_size,
+                )
+                self.dropout_module_for_token_scores = FairseqDropout(
+                    args.dropout, module_name=self.__class__.__name__
+                )
+                self.self_attn_layer_norm_for_token_scores = LayerNorm(self.embed_dim)
+                self.linear_for_token_scores = quant_noise(
+                    nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+                )
+                self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
 
@@ -526,14 +531,26 @@ class Extractor(nn.Module):
         )
 
     def build_self_attention(self, embed_dim, args):
-        return MultiheadAttention(
-            embed_dim,
-            args.encoder_attention_heads,
-            dropout=args.attention_dropout,
-            self_attention=True,
-            q_noise=self.quant_noise,
-            qn_block_size=self.quant_noise_block_size,
-        )
+        when_to_extract = getattr(args, "when_to_extract", "")
+        if when_to_extract == "during_attention":
+            return SoftTopKMultiHeadAttention(
+                args,
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
+        else:
+            return MultiheadAttention(
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
 
     def residual_connection(self, x, residual):
         return residual + x
@@ -616,7 +633,7 @@ class Extractor(nn.Module):
         # calculate extracted token vecs & new padding mask
         extracted_x = torch.bmm(x.permute(1, 2, 0), binary_extract_matrix).permute(2,0,1) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
-        return extracted_x, new_padding_mask
+        return extracted_x, new_padding_mask, topk_high_indices
 
     def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
         """
@@ -639,7 +656,7 @@ class Extractor(nn.Module):
         topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)))
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        return masked_x, padding_mask
+        return masked_x, padding_mask, topk_result
 
     def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):
         """
@@ -667,27 +684,38 @@ class Extractor(nn.Module):
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
         if self.when_to_extract == "before_attention":
-            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
 
         # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
         #     x = self.self_attn_layer_norm(x)
         
-        x, _ = self.self_attn(
-            query=x,
-            key=x,
-            value=x,
-            key_padding_mask=encoder_padding_mask,
-            attn_mask=attn_mask,
-        )
+        if self.when_to_extract == "during_attention":
+            x, topk_result = self.self_attn( # This topk_result is attn_weights
+                tgt_lengths=tgt_lengths,
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=encoder_padding_mask,
+                attn_mask=attn_mask,
+            )
+            new_padding_mask = encoder_padding_mask
+        else:
+            x, _ = self.self_attn(
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=encoder_padding_mask,
+                attn_mask=attn_mask,
+            )
         x = self.dropout_module(x)
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
         if self.when_to_extract == "after_attention":
-            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
         # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
@@ -702,7 +730,7 @@ class Extractor(nn.Module):
             x = self.final_layer_norm(x)
 
         if self.when_to_extract == "after_fc":
-            x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
 
         return x, new_padding_mask
 

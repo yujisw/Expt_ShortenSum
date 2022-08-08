@@ -149,7 +149,7 @@ finetune-proposal-large-on-cpu:
 		--validate-interval-updates 200 \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
-		--token-scoring-fn "linear" \
+		--token-scoring-fn "self_attention" --when-to-extract "during_attention" \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 

@@ -4,3 +4,4 @@ from .mytask import ProposalTask
 from .language_pair_with_tgt_length_dataset import LanguagePairWithTgtLengthDataset
 from .mytrainer import MyTrainer
 from .my_hub_interface import MyHubInterface
+from .soft_topk_attention import SoftTopKMultiHeadAttention
