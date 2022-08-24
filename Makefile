@@ -124,7 +124,7 @@ finetune-proposal-large-on-cpu:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large-on-cpu}
 	CUDA_VISIBLE_DEVICES="" ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
-		--no-progress-bar --log-interval 20 --log-format simple \
+		--no-progress-bar --log-interval 1 --log-format simple \
 		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
 		--max-tokens ${MAX_TOKENS} \
 		--task proposal_task \
@@ -143,13 +143,13 @@ finetune-proposal-large-on-cpu:
 		--weight-decay 0.01 --optimizer adam --adam-betas "(0.9, 0.999)" --adam-eps 1e-08 \
 		--clip-norm 0.1 \
 		--lr-scheduler polynomial_decay --lr ${LR} --total-num-update ${TOTAL_NUM_UPDATES} --warmup-updates ${WARMUP_UPDATES} \
-		--update-freq ${UPDATE_FREQ} \
+		--update-freq 1 \
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
-		--token-scoring-fn "self_attention" --when-to-extract "during_attention" \
+		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -183,6 +183,7 @@ finetune-proposal-large:
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
+		--topk-eps-decay \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 

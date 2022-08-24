@@ -48,7 +48,7 @@ class SoftTopKMultiHeadAttention(MultiheadAttention):
             qn_block_size,
         )
 
-        self.topk_ope = SortedTopK_custom(epsilon=0.01, max_iter=200)
+        self.topk_ope = SortedTopK_custom(max_iter=200)
         # settings for extract_num
         self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
         if self.apply_formula_to_extract_num:
@@ -68,6 +68,7 @@ class SoftTopKMultiHeadAttention(MultiheadAttention):
         query,
         key: Optional[Tensor],
         value: Optional[Tensor],
+        topk_eps: float,
         key_padding_mask: Optional[Tensor] = None,
         incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
         need_weights: bool = True,
@@ -310,7 +311,7 @@ class SoftTopKMultiHeadAttention(MultiheadAttention):
             extract_num = int(tgt_lengths.max().item() * self.alpha_for_extract_num + self.beta_for_extract_num)
         else:
             extract_num = self.extract_num
-        attn_weights_float = self.topk_ope(attn_weights, k=min(extract_num, tgt_len))
+        attn_weights_float = self.topk_ope(attn_weights, k=min(extract_num, tgt_len), epsilon=topk_eps)
 
         attn_weights = attn_weights_float.type_as(attn_weights)
         attn_probs = self.dropout_module(attn_weights)

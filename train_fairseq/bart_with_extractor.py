@@ -574,7 +574,8 @@ class Extractor(nn.Module):
             self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
             if self.use_differentiable_topk:
                 logger.info("Use differentiable top-k operator.")
-                self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
+                self.topk_ope = SortedTopK_custom(max_iter=200)
+                self.topk_eps = 0.001
                 self.extract = self.extract_using_differentiable_topk
             else:
                 logger.info("Use normal top-k operator (not differentiable).")
@@ -759,7 +760,7 @@ class Extractor(nn.Module):
         # get token's scores
         token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
-        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)))
+        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask, topk_result
@@ -803,6 +804,7 @@ class Extractor(nn.Module):
                 query=x,
                 key=x,
                 value=x,
+                topk_eps=self.topk_eps,
                 key_padding_mask=encoder_padding_mask,
                 attn_mask=attn_mask,
             )
