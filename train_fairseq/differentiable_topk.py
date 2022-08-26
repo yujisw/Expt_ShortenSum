@@ -127,7 +127,7 @@ class TopK_custom(torch.nn.Module):
         self.max_iter = max_iter
 
     def forward(self, scores, k, epsilon=None):
-        self.anchors = torch.FloatTensor([k-i for i in range(k+1)]).view([1, 1, k+1])
+        self.anchors = torch.FloatTensor([0,1]).view([1, 1, 2])
         if torch.cuda.is_available():
             self.anchors = self.anchors.cuda()
 
@@ -150,7 +150,7 @@ class TopK_custom(torch.nn.Module):
         C = C / (C.max().detach()) # Cの最大値を定数化して正規化している()
         
         mu = torch.ones([1, n, 1], requires_grad=False)/n
-        nu = torch.FloatTensor([self.k/n, (n-self.k)/n]).view([1, 1, 2]) # [k-n, (n-k)/n]
+        nu = torch.FloatTensor([k/n, (n-k)/n]).view([1, 1, 2]) # [k-n, (n-k)/n]
         
         if torch.cuda.is_available():
             mu = mu.cuda()
