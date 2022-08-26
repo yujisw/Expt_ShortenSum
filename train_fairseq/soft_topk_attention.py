@@ -7,7 +7,7 @@ from torch import Tensor
 from fairseq import utils
 from fairseq.modules import MultiheadAttention
 
-from differentiable_topk import SortedTopK_custom
+from differentiable_topk import TopK_custom, SortedTopK_custom
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,12 @@ class SoftTopKMultiHeadAttention(MultiheadAttention):
             q_noise,
             qn_block_size,
         )
-
-        self.topk_ope = SortedTopK_custom(max_iter=200)
+        
+        self.sorted_topk = getattr(args, "sorted_topk", False)
+        if self.sorted_topk:
+            self.topk_ope = SortedTopK_custom(max_iter=200)
+        else:
+            self.topk_ope = TopK_custom(max_iter=200)
         # settings for extract_num
         self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
         if self.apply_formula_to_extract_num:

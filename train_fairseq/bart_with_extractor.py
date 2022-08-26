@@ -29,7 +29,7 @@ from torch import Tensor
 
 from fairseq.models.fairseq_encoder import EncoderOut
 
-from differentiable_topk import SortedTopK_custom
+from differentiable_topk import TopK_custom, SortedTopK_custom
 from my_hub_interface import MyHubInterface
 from soft_topk_attention import SoftTopKMultiHeadAttention
 
@@ -574,7 +574,11 @@ class Extractor(nn.Module):
             self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
             if self.use_differentiable_topk:
                 logger.info("Use differentiable top-k operator.")
-                self.topk_ope = SortedTopK_custom(max_iter=200)
+                self.sorted_topk = getattr(args, "sorted_topk", False)
+                if self.sorted_topk:
+                    self.topk_ope = SortedTopK_custom(max_iter=200)
+                else:
+                    self.topk_ope = TopK_custom(max_iter=200)
                 self.topk_eps = 0.001
                 self.extract = self.extract_using_differentiable_topk
             else:
@@ -602,7 +606,7 @@ class Extractor(nn.Module):
                 self.linear_for_token_scores = quant_noise(
                     nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
                 )
-                self.activation_for_token_scores = nn.Softmax(dim=0)
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
             elif self.token_scoring_fn=="self_attention":
                 self.self_attn_for_token_scores = MultiheadAttention(
                     self.embed_dim,
@@ -619,7 +623,7 @@ class Extractor(nn.Module):
                 self.linear_for_token_scores = quant_noise(
                     nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
                 )
-                self.activation_for_token_scores = nn.Softmax(dim=0)
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
 
@@ -691,7 +695,7 @@ class Extractor(nn.Module):
             return inner_products
         elif self.token_scoring_fn=="linear":
             x = self.linear_for_token_scores(x).squeeze(-1)
-            x = self.activation_for_token_scores(x)
+            # x = self.activation_for_token_scores(x)
             return x
         elif self.token_scoring_fn=="self_attention":
             residual = x
@@ -713,7 +717,7 @@ class Extractor(nn.Module):
             #     x = self.final_layer_norm(x)
 
             x = self.linear_for_token_scores(x).squeeze(-1) # [seq_len, bsz]
-            x = self.activation_for_token_scores(x) # [seq_len, bsz]
+            # x = self.activation_for_token_scores(x) # [seq_len, bsz]
             return x
 
     def extract_using_normal_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
