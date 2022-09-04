@@ -183,7 +183,7 @@ finetune-proposal-large:
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
-		--topk-eps-decay \
+		--sorted-topk \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -209,6 +209,18 @@ generate-proposal:
 		--src data/cnn_dm/${SPLIT}.source \
 		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}
+
+# Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
+generate-proposal-fixed-len:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal-fixed-len}
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_fixed_length.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--fixed-length ${FIXED_LENGTH} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}
 
 # Before execute this command, execute the command below
 # export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar

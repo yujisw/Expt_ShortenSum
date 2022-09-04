@@ -109,6 +109,11 @@ class ProposedModel(TransformerModel):
             default="before_attention",
             help="When the model extracts.",
         )
+        parser.add_argument(
+            "--sorted-topk",
+            action="store_true",
+            help="Use sorted top-k operator."
+        )
 
 
         # Here are the arguments for the extracting method.
