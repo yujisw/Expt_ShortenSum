@@ -15,7 +15,7 @@ CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram
 
 
 @torch.no_grad()
-def generate(bart, infile, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_kwargs):
+def generate(bart, infile, fixed_length, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_kwargs):
     count = 1
 
     # if n_obs is not None: bsz = min(bsz, n_obs)
@@ -27,7 +27,7 @@ def generate(bart, infile, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_k
             if n_obs is not None and count > n_obs:
                 break
             if count % bsz == 0:
-                hypotheses_batch = bart.sample(slines, **eval_kwargs)
+                hypotheses_batch = bart.sample(slines, desired_lengths=[fixed_length for i in range(len(slines))], **eval_kwargs)
                 for hypothesis in hypotheses_batch:
                     fout.write(hypothesis + "\n")
                     fout.flush()
@@ -37,7 +37,7 @@ def generate(bart, infile, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_k
             count += 1
 
         if slines != []:
-            hypotheses_batch = bart.sample(slines, **eval_kwargs)
+            hypotheses_batch = bart.sample(slines, desired_lengths=[fixed_length for i in range(len(slines))], **eval_kwargs)
             for hypothesis in hypotheses_batch:
                 fout.write(hypothesis + "\n")
                 fout.flush()
@@ -81,12 +81,18 @@ def main():
         default=False,
         help="if true use XSUM_KWARGS else CNN_KWARGS",
     )
+
+    # Here are the additional arguments.
     parser.add_argument(
         "--use-proposal",
         action="store_true",
         default=False,
         help="if true use ProposedModel else BARTModel",
     )
+    parser.add_argument(
+        "--fixed-length", default=70, help="fixed length to summaries", type=int
+    )
+
     args = parser.parse_args()
     eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
     if args.model_dir == "pytorch/fairseq":
@@ -97,8 +103,8 @@ def main():
             checkpoint_file=args.model_file,
             data_name_or_path=args.model_dir,
         )
-        foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
-        model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
+        # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
+        # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
     else:
         model = BARTModel.from_pretrained(
             args.model_dir,
@@ -112,7 +118,7 @@ def main():
     if torch.cuda.is_available():
         model = model.cuda().half()
     generate(
-        model, args.src, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
+        model, args.src, args.fixed_length, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
     )
 
 

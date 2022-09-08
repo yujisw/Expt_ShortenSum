@@ -7,17 +7,19 @@ BART: Denoising Sequence-to-Sequence Pre-training for
 Natural Language Generation, Translation, and Comprehension
 """
 
+import copy
 import logging
+from typing import List, Dict
 from numpy import extract, inner
 
 import torch
 import torch.nn as nn
 from fairseq import utils
-from fairseq.models import register_model, register_model_architecture
+from fairseq.models import FairseqEncoder, register_model, register_model_architecture
 from fairseq.models.transformer import TransformerModel
 from fairseq.modules.transformer_sentence_encoder import init_bert_params
 
-from fairseq.models.bart.hub_interface import BARTHubInterface
+# from fairseq.models.bart.hub_interface import BARTHubInterface
 
 from typing import Optional
 from fairseq.modules import LayerNorm, MultiheadAttention
@@ -27,7 +29,9 @@ from torch import Tensor
 
 from fairseq.models.fairseq_encoder import EncoderOut
 
-from differentiable_topk import SortedTopK_custom
+from differentiable_topk import TopK_custom, SortedTopK_custom
+from my_hub_interface import MyHubInterface
+from soft_topk_attention import SoftTopKMultiHeadAttention
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +47,10 @@ class ProposedModel(TransformerModel):
 
         self.classification_heads = nn.ModuleDict()
 
-        logger.info(self.encoder.dictionary.eos())
-        self.extractor = Extractor(args, self.encoder.dictionary.eos())
+        logger.info("encoder dictionary eos: {}".format(self.encoder.dictionary.eos()))
+
+        extractor = Extractor(args, self.encoder.dictionary.eos())
+        self.encoder = Encoder_Extractor(args, encoder, extractor)
 
     @staticmethod
     def add_args(parser):
@@ -66,7 +72,7 @@ class ProposedModel(TransformerModel):
             help="Apply spectral normalization on the classification head",
         )
 
-        # Here are the additional arguments for the Extractor.
+        # Here are the arguments for the Extractor.
         parser.add_argument(
             "--extract-num",
             help="The number of extracted tokens",
@@ -92,6 +98,35 @@ class ProposedModel(TransformerModel):
             help="Beta for the formula of extract_num.",
             type=int
         )
+        parser.add_argument(
+            "--when-to-extract",
+            choices=[
+                "before_attention",
+                "during_attention",
+                "after_attention",
+                "after_fc",
+            ],
+            default="before_attention",
+            help="When the model extracts.",
+        )
+        parser.add_argument(
+            "--sorted-topk",
+            action="store_true",
+            help="Use sorted top-k operator."
+        )
+
+
+        # Here are the arguments for the extracting method.
+        parser.add_argument(
+            "--token-scoring-fn",
+            choices=[
+                "inner_product",
+                "linear",
+                "self_attention",
+            ],
+            default="self_attention",
+            help="Token scoring function to use for the Extractor.",
+        )
 
     @property
     def supported_targets(self):
@@ -114,29 +149,14 @@ class ProposedModel(TransformerModel):
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
+            tgt_lengths=tgt_lengths,
             token_embeddings=token_embeddings,
             **kwargs,
         )
 
-        # ここに提案手法を組み込む
-        extractor_out, new_padding_mask = self.extractor(
-            encoder_out.encoder_out,
-            src_tokens,
-            encoder_out.encoder_padding_mask,
-            tgt_lengths,
-        )
-        extractor_out = EncoderOut(
-            encoder_out=extractor_out,  # T x B x C
-            encoder_padding_mask=new_padding_mask,  # B x T
-            encoder_embedding=encoder_out.encoder_embedding,  # B x T x C
-            encoder_states=encoder_out.encoder_states,  # List[T x B x C]
-            src_tokens=None,
-            src_lengths=None,
-        )
-
         x, extra = self.decoder(
             prev_output_tokens,
-            encoder_out=extractor_out,
+            encoder_out=encoder_out,
             features_only=features_only,
             **kwargs,
         )
@@ -151,7 +171,7 @@ class ProposedModel(TransformerModel):
         return x, extra
 
     @classmethod
-    def from_pretrained( # この関数は訓練時には呼ばれていないっぽい
+    def from_pretrained( # この関数は訓練時には呼ばれず、generate時に呼ばれる。
         cls,
         model_name_or_path,
         checkpoint_file="model.pt",
@@ -159,7 +179,6 @@ class ProposedModel(TransformerModel):
         bpe="gpt2",
         **kwargs,
     ):
-        logger.info("PrintDebug: ProposedModel from_pretrained called.")
         from fairseq import hub_utils
 
         # Load args, task, and models from trained checkpoint
@@ -172,7 +191,7 @@ class ProposedModel(TransformerModel):
             load_checkpoint_heads=True,
             **kwargs,
         )
-        return BARTHubInterface(x["args"], x["task"], x["models"][0])
+        return MyHubInterface(x["args"], x["task"], x["models"][0])
 
     def register_classification_head(
         self, name, num_classes=None, inner_dim=None, **kwargs
@@ -254,57 +273,58 @@ class ProposedModel(TransformerModel):
 
         # When finetuning on translation task, remove last row of
         # embedding matrix that corresponds to mask_idx token.
-        loaded_dict_size = state_dict["encoder.embed_tokens.weight"].size(0)
+        loaded_dict_size = state_dict["encoder.encoder.embed_tokens.weight"].size(0)
         if (
             loaded_dict_size == len(self.encoder.dictionary) + 1
             and "<mask>" not in self.encoder.dictionary
         ):
-            truncate_emb("encoder.embed_tokens.weight")
+            truncate_emb("encoder.encoder.embed_tokens.weight")
             truncate_emb("decoder.embed_tokens.weight")
-            truncate_emb("encoder.output_projection.weight")
+            truncate_emb("encoder.encoder.output_projection.weight")
             truncate_emb("decoder.output_projection.weight")
 
         # When continued pretraining on new set of languages for mbart,
         # add extra lang embeddings at the end of embed_tokens.
         # Note: newly added languages are assumed to have been added at the end.
-        if self.args.task == "multilingual_denoising" and loaded_dict_size < len(
-            self.encoder.dictionary
-        ):
-            logger.info(
-                "Adding extra language embeddings not found in pretrained model for "
-                "continued pretraining of MBART on new set of languages."
-            )
-            loaded_mask_token_embedding = state_dict["encoder.embed_tokens.weight"][
-                -1, :
-            ]
+        # ここは multilingual_denoisingやらないから呼ばれない。ややこしいのでコメントアウト。
+        # if self.args.task == "multilingual_denoising" and loaded_dict_size < len(
+        #     self.encoder.dictionary
+        # ):
+        #     logger.info(
+        #         "Adding extra language embeddings not found in pretrained model for "
+        #         "continued pretraining of MBART on new set of languages."
+        #     )
+        #     loaded_mask_token_embedding = state_dict["encoder.embed_tokens.weight"][
+        #         -1, :
+        #     ]
 
-            num_langids_to_add = len(self.encoder.dictionary) - loaded_dict_size
-            embed_dim = state_dict["encoder.embed_tokens.weight"].size(1)
+        #     num_langids_to_add = len(self.encoder.dictionary) - loaded_dict_size
+        #     embed_dim = state_dict["encoder.embed_tokens.weight"].size(1)
 
-            new_lang_embed_to_add = torch.zeros(num_langids_to_add, embed_dim)
-            nn.init.normal_(new_lang_embed_to_add, mean=0, std=embed_dim ** -0.5)
-            new_lang_embed_to_add = new_lang_embed_to_add.to(
-                dtype=state_dict["encoder.embed_tokens.weight"].dtype,
-            )
+        #     new_lang_embed_to_add = torch.zeros(num_langids_to_add, embed_dim)
+        #     nn.init.normal_(new_lang_embed_to_add, mean=0, std=embed_dim ** -0.5)
+        #     new_lang_embed_to_add = new_lang_embed_to_add.to(
+        #         dtype=state_dict["encoder.embed_tokens.weight"].dtype,
+        #     )
 
-            state_dict["encoder.embed_tokens.weight"] = torch.cat(
-                [
-                    state_dict["encoder.embed_tokens.weight"][
-                        : loaded_dict_size - 1, :
-                    ],
-                    new_lang_embed_to_add,
-                    loaded_mask_token_embedding.unsqueeze(0),
-                ]
-            )
-            state_dict["decoder.embed_tokens.weight"] = torch.cat(
-                [
-                    state_dict["decoder.embed_tokens.weight"][
-                        : loaded_dict_size - 1, :
-                    ],
-                    new_lang_embed_to_add,
-                    loaded_mask_token_embedding.unsqueeze(0),
-                ]
-            )
+        #     state_dict["encoder.embed_tokens.weight"] = torch.cat(
+        #         [
+        #             state_dict["encoder.embed_tokens.weight"][
+        #                 : loaded_dict_size - 1, :
+        #             ],
+        #             new_lang_embed_to_add,
+        #             loaded_mask_token_embedding.unsqueeze(0),
+        #         ]
+        #     )
+        #     state_dict["decoder.embed_tokens.weight"] = torch.cat(
+        #         [
+        #             state_dict["decoder.embed_tokens.weight"][
+        #                 : loaded_dict_size - 1, :
+        #             ],
+        #             new_lang_embed_to_add,
+        #             loaded_mask_token_embedding.unsqueeze(0),
+        #         ]
+        #     )
 
         # Copy any newly-added classification heads into the state dict
         # with their current weights.
@@ -315,6 +335,128 @@ class ProposedModel(TransformerModel):
                     logger.info("Overwriting", prefix + "classification_heads." + k)
                     state_dict[prefix + "classification_heads." + k] = v
 
+class Encoder_Extractor(FairseqEncoder):
+    def __init__(self, args, encoder, extractor):
+        super().__init__(encoder.dictionary)
+        self.args = args
+        self.encoder = encoder
+        self.extractor = extractor
+        self.max_tokens = getattr(args, "max_tokens", None)
+        self.use_topk_result = getattr(args, "use_topk_result", False)
+
+    def max_positions(self):
+        """Return the max input length allowed by the task."""
+        return self.max_tokens
+
+    def forward_torchscript(self, net_input: Dict[str, Tensor]):
+        """A TorchScript-compatible version of forward.
+
+        Encoders which use additional arguments may want to override
+        this method for TorchScript compatibility.
+        """
+        if torch.jit.is_scripting():
+            return self.forward(
+                src_tokens=net_input["src_tokens"],
+                src_lengths=net_input["src_lengths"],
+                tgt_lengths=net_input["tgt_lengths"],
+            )
+        else:
+            return self.forward_non_torchscript(net_input)
+
+    @torch.jit.export
+    def reorder_encoder_out(self, encoder_out: EncoderOut, new_order):
+        """
+        Reorder encoder output according to *new_order*.
+
+        Args:
+            encoder_out: output from the ``forward()`` method
+            new_order (LongTensor): desired order
+
+        Returns:
+            *encoder_out* rearranged according to *new_order*
+        """
+        """
+        Since encoder_padding_mask and encoder_embedding are both of type
+        Optional[Tensor] in EncoderOut, they need to be copied as local
+        variables for Torchscript Optional refinement
+        """
+        encoder_padding_mask: Optional[Tensor] = encoder_out.encoder_padding_mask
+        encoder_embedding: Optional[Tensor] = encoder_out.encoder_embedding
+
+        new_encoder_out = (
+            encoder_out.encoder_out
+            if encoder_out.encoder_out is None
+            else encoder_out.encoder_out.index_select(1, new_order)
+        )
+        new_encoder_padding_mask = (
+            encoder_padding_mask
+            if encoder_padding_mask is None
+            else encoder_padding_mask.index_select(0, new_order)
+        )
+        new_encoder_embedding = (
+            encoder_embedding
+            if encoder_embedding is None
+            else encoder_embedding.index_select(0, new_order)
+        )
+        src_tokens = encoder_out.src_tokens
+        if src_tokens is not None:
+            src_tokens = src_tokens.index_select(0, new_order)
+
+        src_lengths = encoder_out.src_lengths
+        if src_lengths is not None:
+            src_lengths = src_lengths.index_select(0, new_order)
+
+        encoder_states = encoder_out.encoder_states
+        if encoder_states is not None:
+            for idx, state in enumerate(encoder_states):
+                encoder_states[idx] = state.index_select(1, new_order)
+
+        return EncoderOut(
+            encoder_out=new_encoder_out,  # T x B x C
+            encoder_padding_mask=new_encoder_padding_mask,  # B x T
+            encoder_embedding=new_encoder_embedding,  # B x T x C
+            encoder_states=encoder_states,  # List[T x B x C]
+            src_tokens=src_tokens,  # B x T
+            src_lengths=src_lengths,  # B x 1
+        )
+
+    def forward(
+        self,
+        src_tokens,
+        src_lengths,
+        tgt_lengths=None, # [bsz] (the same shape as src_lengths)
+        token_embeddings=None,
+        **kwargs,
+    ):
+        # if classification_head_name is not None:
+        #     features_only = True
+
+        encoder_out = self.encoder(
+            src_tokens,
+            src_lengths=src_lengths,
+            token_embeddings=token_embeddings,
+            **kwargs,
+        )
+
+        # ここに提案手法を組み込む
+        extractor_out, new_padding_mask, topk_result = self.extractor(
+            encoder_out.encoder_out,
+            src_tokens,
+            encoder_out.encoder_padding_mask,
+            tgt_lengths,
+        )
+        extractor_out = EncoderOut(
+            encoder_out=extractor_out,  # T x B x C
+            encoder_padding_mask=new_padding_mask,  # B x T
+            encoder_embedding=encoder_out.encoder_embedding,  # B x T x C
+            encoder_states=encoder_out.encoder_states,  # List[T x B x C]
+            src_tokens=None,
+            src_lengths=None,
+        )
+        if self.use_topk_result: # NOTE You can use this only for analyzing, not supported for training or generating.
+            return extractor_out, topk_result
+        else:
+            return extractor_out
 
 class Extractor(nn.Module):
     """Encoder layer block.
@@ -369,29 +511,71 @@ class Extractor(nn.Module):
 
         self.final_layer_norm = LayerNorm(self.embed_dim)
 
-        # Additional arguments
+        # The additional arguments below
         self.eos_idx = eos_idx
         logger.info("eos_idx: {}".format(self.eos_idx))
 
         # settings for the method of extracting
-        self.extract = self.extract_by_inner_product
-        self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
-        if self.use_differentiable_topk:
-            self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
-            self.extract = self.extract_by_inner_product_using_differentiable_topk
-
-        # settings for extract_num
-        self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
-        if self.apply_formula_to_extract_num:
-            self.alpha_for_extract_num = getattr(args, "alpha_for_extract_num", -1)
-            self.beta_for_extract_num = getattr(args, "beta_for_extract_num", -1)
-            assert self.alpha_for_extract_num!=-1 and self.beta_for_extract_num!=-1, "Specify ALPHA or BETA when applying a formula to extract_num."
-            logger.info("extract_num are determined by the following formula.")
-            logger.info("extract_num = {} * target_length + {}".format(self.alpha_for_extract_num, self.beta_for_extract_num))
+        self.when_to_extract = getattr(args, "when_to_extract", "")
+        assert self.when_to_extract != ""
+        logger.info("Extract {}".format(self.when_to_extract))
+        if self.when_to_extract == "during_attention":
+            pass
         else:
-            self.extract_num = getattr(args, "extract_num", 0)
-            assert self.extract_num!=0, "Specify extract_num when using a fixed value for it. It should be a positive integer."
-            logger.info("For different target lengths, extract_num is fixed at {}.".format(self.extract_num))
+            self.extract = self.extract_using_normal_topk
+            self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
+            if self.use_differentiable_topk:
+                logger.info("Use differentiable top-k operator.")
+                self.sorted_topk = getattr(args, "sorted_topk", False)
+                if self.sorted_topk:
+                    self.topk_ope = SortedTopK_custom(max_iter=200)
+                else:
+                    self.topk_ope = TopK_custom(max_iter=200)
+                self.topk_eps = 0.001
+                self.extract = self.extract_using_differentiable_topk
+            else:
+                logger.info("Use normal top-k operator (not differentiable).")
+                self.extract = self.extract_using_normal_topk
+
+            # settings for extract_num
+            self.apply_formula_to_extract_num = getattr(args, "apply_formula_to_extract_num", False)
+            if self.apply_formula_to_extract_num:
+                self.alpha_for_extract_num = getattr(args, "alpha_for_extract_num", -1)
+                self.beta_for_extract_num = getattr(args, "beta_for_extract_num", -1)
+                assert self.alpha_for_extract_num!=-1 and self.beta_for_extract_num!=-1, "Specify ALPHA or BETA when applying a formula to extract_num."
+                logger.info("extract_num are determined by the following formula.")
+                logger.info("extract_num = {} * target_length + {}".format(self.alpha_for_extract_num, self.beta_for_extract_num))
+            else:
+                self.extract_num = getattr(args, "extract_num", 0)
+                assert self.extract_num!=0, "Specify extract_num when using a fixed value for it. It should be a positive integer."
+                logger.info("For different target lengths, extract_num is fixed at {}.".format(self.extract_num))
+
+            # setting for token scoring
+            self.token_scoring_fn = getattr(args, "token_scoring_fn", "")
+            assert self.token_scoring_fn != ""
+            logger.info("Calculate token's scores with {}".format(self.token_scoring_fn))
+            if self.token_scoring_fn=="linear":
+                self.linear_for_token_scores = quant_noise(
+                    nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+                )
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
+            elif self.token_scoring_fn=="self_attention":
+                self.self_attn_for_token_scores = MultiheadAttention(
+                    self.embed_dim,
+                    args.encoder_attention_heads,
+                    dropout=args.attention_dropout,
+                    self_attention=True,
+                    q_noise=self.quant_noise,
+                    qn_block_size=self.quant_noise_block_size,
+                )
+                self.dropout_module_for_token_scores = FairseqDropout(
+                    args.dropout, module_name=self.__class__.__name__
+                )
+                self.self_attn_layer_norm_for_token_scores = LayerNorm(self.embed_dim)
+                self.linear_for_token_scores = quant_noise(
+                    nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
+                )
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
 
@@ -410,14 +594,26 @@ class Extractor(nn.Module):
         )
 
     def build_self_attention(self, embed_dim, args):
-        return MultiheadAttention(
-            embed_dim,
-            args.encoder_attention_heads,
-            dropout=args.attention_dropout,
-            self_attention=True,
-            q_noise=self.quant_noise,
-            qn_block_size=self.quant_noise_block_size,
-        )
+        when_to_extract = getattr(args, "when_to_extract", "")
+        if when_to_extract == "during_attention":
+            return SoftTopKMultiHeadAttention(
+                args,
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
+        else:
+            return MultiheadAttention(
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
 
     def residual_connection(self, x, residual):
         return residual + x
@@ -436,20 +632,47 @@ class Extractor(nn.Module):
                     state_dict["{}.{}.{}".format(name, new, m)] = state_dict[k]
                     del state_dict[k]
 
-    def get_token_scores(self, x, src_tokens, padding_mask):
+    def get_token_scores(self, x, src_tokens, padding_mask, attn_mask):
         """
         Calculating token's scores using inner product.
         """
-        # 文表現を得る
-        sentence_representation = x[
-                src_tokens.permute(1,0).eq(self.eos_idx), :
-            ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
-        # calc similarity between each token vec and sentence representation by inner product
-        # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
-        inner_products = torch.sum(sentence_representation * x, 2).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
-        return inner_products
+        if self.token_scoring_fn=="inner_product":
+            # 文表現を得る
+            sentence_representation = x[
+                    src_tokens.permute(1,0).eq(self.eos_idx), :
+                ].view(-1, x.size(1), x.size(-1))[-1, :, :] # [1, batch_size, embed_dim]
+            # calc similarity between each token vec and sentence representation by inner product
+            # we replace vecs of padding token into "-inf" so that their topk_result becomes 0.5, which means padding tokens are not chosen.
+            inner_products = torch.sum(sentence_representation * x, 2) # [seq_len, batch_size]
+            return inner_products
+        elif self.token_scoring_fn=="linear":
+            x = self.linear_for_token_scores(x).squeeze(-1)
+            # x = self.activation_for_token_scores(x)
+            return x
+        elif self.token_scoring_fn=="self_attention":
+            residual = x
+            x, _ = self.self_attn_for_token_scores(
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=padding_mask,
+                attn_mask=attn_mask,
+            ) # [seq_len, bsz, embed_dim] -> [seq_len, bsz, embed_dim]
 
-    def extract_by_inner_product(self, x, src_tokens, padding_mask, tgt_lengths):
+            x = self.dropout_module_for_token_scores(x)
+            x = self.residual_connection(x, residual)
+            if not self.normalize_before:
+                x = self.self_attn_layer_norm_for_token_scores(x)
+            residual = x
+            # argsみたらFalseだったからこれはコメントアウト。
+            # if self.normalize_before:
+            #     x = self.final_layer_norm(x)
+
+            x = self.linear_for_token_scores(x).squeeze(-1) # [seq_len, bsz]
+            # x = self.activation_for_token_scores(x) # [seq_len, bsz]
+            return x
+
+    def extract_using_normal_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -464,7 +687,7 @@ class Extractor(nn.Module):
         else:
             extract_num = self.extract_num
         # get token's scores
-        token_scores = self.get_token_scores(x, src_tokens, padding_mask) # [seq_len, batch_size]
+        token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask).masked_fill(padding_mask.permute(1,0), float("-inf")) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_high_indices = torch.topk(token_scores, min(extract_num, x.size(0)), dim=0).indices
         topk_high_indices = torch.sort(topk_high_indices, dim=0).values # restore the original order
@@ -473,9 +696,9 @@ class Extractor(nn.Module):
         # calculate extracted token vecs & new padding mask
         extracted_x = torch.bmm(x.permute(1, 2, 0), binary_extract_matrix).permute(2,0,1) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
-        return extracted_x, new_padding_mask
+        return extracted_x, new_padding_mask, topk_high_indices
 
-    def extract_by_inner_product_using_differentiable_topk(self, x, src_tokens, padding_mask, tgt_lengths):
+    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -491,12 +714,12 @@ class Extractor(nn.Module):
             extract_num = self.extract_num
         # logger.info("extract_num for this minibatch is {}. (minibatch size is {})".format(extract_num, x.size(1)))
         # get token's scores
-        token_scores = self.get_token_scores(x, src_tokens, padding_mask) # [seq_len, batch_size]
+        token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
-        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)))
+        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        return masked_x, padding_mask
+        return masked_x, padding_mask, topk_result
 
     def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):
         """
@@ -523,30 +746,44 @@ class Extractor(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
-        # argsみたらFalseだったからこれはコメントアウト。residualはextractしたあとのものにする。
-        # residual = x
+        if self.when_to_extract == "before_attention":
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+        residual = x
+
+        # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
         #     x = self.self_attn_layer_norm(x)
         
-        # ここで選択を行う x (seq_len, batch, embed_dim) -> extracted_x (extract_num, batch, embed_dim)
-        extracted_x, new_padding_mask = self.extract(x, src_tokens, encoder_padding_mask, tgt_lengths)
-        residual = extracted_x
-
-        x, _ = self.self_attn(
-            query=extracted_x,
-            key=x,
-            value=x,
-            key_padding_mask=encoder_padding_mask,
-            attn_mask=attn_mask,
-        )
+        if self.when_to_extract == "during_attention":
+            x, topk_result = self.self_attn( # This topk_result is attn_weights
+                tgt_lengths=tgt_lengths,
+                query=x,
+                key=x,
+                value=x,
+                topk_eps=self.topk_eps,
+                key_padding_mask=encoder_padding_mask,
+                attn_mask=attn_mask,
+            )
+            new_padding_mask = encoder_padding_mask
+        else:
+            x, _ = self.self_attn(
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=encoder_padding_mask,
+                attn_mask=attn_mask,
+            )
         x = self.dropout_module(x)
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
+        if self.when_to_extract == "after_attention":
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
-        if self.normalize_before:
-            x = self.final_layer_norm(x)
+        # argsみたらFalseだったからこれはコメントアウト。
+        # if self.normalize_before:
+        #     x = self.final_layer_norm(x)
 
         x = self.activation_fn(self.fc1(x))
         x = self.activation_dropout_module(x)
@@ -555,7 +792,11 @@ class Extractor(nn.Module):
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
-        return x, new_padding_mask
+
+        if self.when_to_extract == "after_fc":
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+
+        return x, new_padding_mask, topk_result
 
 
 class BARTClassificationHead(nn.Module):

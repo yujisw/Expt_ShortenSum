@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-def sorted_sinkhorn_forward(C, mu, nu, epsilon, max_iter):
+def sinkhorn_forward(C, mu, nu, epsilon, max_iter):
     bs, n, k_ = C.size()
     
     v = torch.ones([bs, 1, k_]) / ( k_ ) # [bs, 1, k+1] 全て1./(k+1)
@@ -16,7 +16,7 @@ def sorted_sinkhorn_forward(C, mu, nu, epsilon, max_iter):
     Gamma = u*G*v
     return Gamma
 
-def sorted_sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter):
+def sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter):
     bs, n, k_ = C.size()
     k = k_-1
     
@@ -42,7 +42,17 @@ def sorted_sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter):
     Gamma = torch.exp((-C+f+g)/epsilon)
     return Gamma
 
-def sorted_sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon):
+def sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon):
+    """
+    Input
+        grad_output_Gamma: Is its shape the same as Gamma?
+        Gamma: shape:[bs, n, k+1]
+        mu: shape:[1, n, 1], all values are 1./n
+        nu: shape:[1, 1, k+1]
+    Output:
+        grad_output_C: shape:[bs, n, k+1]
+    """
+
     nu_ = nu[:,:,:-1]
     Gamma_ = Gamma[:,:,:-1]
     
@@ -75,7 +85,7 @@ def sorted_sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon):
     grad_C = (-G1+G2+G3)/epsilon # [bs, n, k+1]
     return grad_C
 
-class SortedTopKFunc(torch.autograd.Function):
+class TopKFunc(torch.autograd.Function):
     @staticmethod
     def forward(ctx, C, mu, nu, epsilon, max_iter):
         """
@@ -89,12 +99,12 @@ class SortedTopKFunc(torch.autograd.Function):
         
         with torch.no_grad():
             if epsilon > 1e-2:
-                Gamma = sorted_sinkhorn_forward(C, mu, nu, epsilon, max_iter)
+                Gamma = sinkhorn_forward(C, mu, nu, epsilon, max_iter)
                 if bool(torch.any(Gamma!=Gamma)):
                     print("Nan appeared in Gamma, re-computing...")
-                    Gamma = sorted_sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter)
+                    Gamma = sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter)
             else:
-                Gamma = sorted_sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter)
+                Gamma = sinkhorn_forward_stablized(C, mu, nu, epsilon, max_iter)
             ctx.save_for_backward(mu, nu, Gamma)
             ctx.epsilon = epsilon
         return Gamma
@@ -107,8 +117,50 @@ class SortedTopKFunc(torch.autograd.Function):
         # nu: [1, 1, k+1]
         # Gamma [bs, n, k+1]
         with torch.no_grad():
-            grad_C = sorted_sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon)
+            grad_C = sinkhorn_backward(grad_output_Gamma, Gamma, mu, nu, epsilon)
         return grad_C, None, None, None, None
+
+class TopK_custom(torch.nn.Module):
+    def __init__(self, epsilon=0.001, max_iter=200):
+        super(TopK_custom, self).__init__()
+        self.epsilon = epsilon
+        self.max_iter = max_iter
+
+    def forward(self, scores, k, epsilon=None):
+        self.anchors = torch.FloatTensor([0,1]).view([1, 1, 2])
+        if torch.cuda.is_available():
+            self.anchors = self.anchors.cuda()
+
+        if epsilon is not None: # if you changed q_length while forwarding
+            self.epsilon = epsilon
+
+        bs, n = scores.size()
+        scores = scores.view([bs, n, 1])
+        
+        # find the -inf value and replate it with the minimum value except -inf
+        scores_ = scores.clone().detach()
+        max_scores = torch.max(scores_).detach()
+        scores_[scores_==float("-inf")] = float("inf")
+        min_scores = torch.min(scores_).detach()
+        filled_value = min_scores - (max_scores - min_scores)
+        mask = scores==float("-inf")
+        scores = scores.masked_fill(mask, filled_value)
+        
+        C = (scores-self.anchors)**2 # [bs, n, 1] -> [bs, n, 2]
+        C = C / (C.max().detach()) # Cの最大値を定数化して正規化している()
+        
+        mu = torch.ones([1, n, 1], requires_grad=False)/n
+        nu = torch.FloatTensor([k/n, (n-k)/n]).view([1, 1, 2]) # [k-n, (n-k)/n]
+        
+        if torch.cuda.is_available():
+            mu = mu.cuda()
+            nu = nu.cuda()
+        
+        Gamma = TopKFunc.apply(C, mu, nu, self.epsilon, self.max_iter)
+        
+        A = Gamma[:,:,:1]*n # 上位k個に選ばれなかったところは削る
+        
+        return A, None
 
 class SortedTopK_custom(torch.nn.Module):
     def __init__(self, epsilon=0.001, max_iter=200):
@@ -148,7 +200,7 @@ class SortedTopK_custom(torch.nn.Module):
             mu = mu.cuda()
             nu = nu.cuda()
         
-        Gamma = SortedTopKFunc.apply(C, mu, nu, self.epsilon, self.max_iter)
+        Gamma = TopKFunc.apply(C, mu, nu, self.epsilon, self.max_iter)
         
         A = Gamma[:,:,:k]*n # 上位k個に選ばれなかったところは削る
         

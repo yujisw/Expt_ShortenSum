@@ -131,7 +131,12 @@ def main(args):
     train_meter = meters.StopwatchMeter()
     train_meter.start()
 
+    topk_eps = 0.001
+    trainer.model.encoder.extractor.topk_eps = topk_eps
+    logger.info("Initialized SoftTopK's epsilon with {}".format(trainer.model.encoder.extractor.topk_eps))
+
     while lr > args.min_lr and epoch_itr.next_epoch_idx <= max_epoch:
+        logger.info("next_epoch_idx: {}".format(epoch_itr.next_epoch_idx))
         # train for one epoch
         valid_losses, should_stop = train(args, trainer, task, epoch_itr)
         if should_stop:
@@ -139,6 +144,12 @@ def main(args):
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+
+        if args.topk_eps_decay and epoch_itr.next_epoch_idx > 1 and topk_eps > 0.000001:
+            # update topk's epsilon
+            topk_eps = topk_eps * 0.25
+            trainer.model.encoder.extractor.topk_eps = topk_eps
+            logger.info("Updated topk's epsilon: {}".format(trainer.model.encoder.extractor.topk_eps))
 
         epoch_itr = trainer.get_train_iterator(
             epoch_itr.next_epoch_idx,
@@ -236,6 +247,7 @@ def train(args, trainer, task, epoch_itr):
             num_updates = trainer.get_num_updates()
             if num_updates % args.log_interval == 0:
                 stats = get_training_stats(metrics.get_smoothed_values("train_inner"))
+                stats["topk_eps"] = trainer.model.encoder.extractor.topk_eps
                 progress.log(stats, tag="train_inner", step=num_updates)
                 if args.use_wandb:
                     wandb.log(stats, step=num_updates)
@@ -385,6 +397,8 @@ def cli_main(modify_parser=None):
                        help="Freeze pretrained weights (encoder, decoder, and classification_heads)")
     parser.add_argument("--use-wandb", action="store_true",
                        help="Use wandb to monitor training progress")
+    parser.add_argument("--topk-eps-decay", action="store_true",
+                       help="Apply decay to topk's epsilon")
 
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.use_wandb:

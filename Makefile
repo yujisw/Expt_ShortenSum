@@ -10,6 +10,7 @@ UPDATE_FREQ=128
 PRETRAINED_BASE_PATH=data/bart.base/model.pt
 PRETRAINED_LARGE_PATH=data/bart.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
+PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 # Output data path
@@ -84,6 +85,12 @@ preprocess-extractor:
 	mkdir -p data/bart.with.extractor.large
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_extractor.py
 
+preprocess-proposal:
+	mkdir -p data/bart.extractor.in.encoder.large
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_proposal.py
+	mkdir -p data/desired_lengths
+	${POETRY_RUN} python data_utils/make_oracle_length_data.py
+
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
@@ -117,8 +124,8 @@ finetune-proposal-large-on-cpu:
 	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large-on-cpu}
 	CUDA_VISIBLE_DEVICES="" ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
-		--no-progress-bar --log-interval 20 --log-format simple \
-		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
+		--no-progress-bar --log-interval 1 --log-format simple \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
 		--max-tokens ${MAX_TOKENS} \
 		--task proposal_task \
 		--source-lang source --target-lang target \
@@ -136,11 +143,13 @@ finetune-proposal-large-on-cpu:
 		--weight-decay 0.01 --optimizer adam --adam-betas "(0.9, 0.999)" --adam-eps 1e-08 \
 		--clip-norm 0.1 \
 		--lr-scheduler polynomial_decay --lr ${LR} --total-num-update ${TOTAL_NUM_UPDATES} --warmup-updates ${WARMUP_UPDATES} \
-		--update-freq ${UPDATE_FREQ} \
+		--update-freq 1 \
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		--extract-num 1024 --use-differentiable-topk \
+		--use-differentiable-topk \
+		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
+		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -149,7 +158,7 @@ finetune-proposal-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
 		--save-dir ${TRAIN_DEST_DIR} \
 		--no-progress-bar --log-interval 20 --log-format simple \
-		--restore-file ${PRETRAINED_LARGE_PATH_FOR_EXTRACTOR} \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
 		--max-tokens ${MAX_TOKENS} \
 		--task proposal_task \
 		--source-lang source --target-lang target \
@@ -173,6 +182,8 @@ finetune-proposal-large:
 		--validate-interval-updates 200 \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
+		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
+		--sorted-topk \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -192,17 +203,31 @@ generate-proposal:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py --use-proposal \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}
 
+# Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
+generate-proposal-fixed-len:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal-fixed-len}
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_fixed_length.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--fixed-length ${FIXED_LENGTH} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}
+
+# Before execute this command, execute the command below
+# export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 calc-rouge:
-	export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
-	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo.tokenized
+	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized
 	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}

@@ -24,7 +24,7 @@ from fairseq.data import (
 )
 from fairseq.tasks import LegacyFairseqTask, register_task
 
-from .language_pair_with_tgt_length_dataset import LanguagePairWithTgtLengthDataset
+from language_pair_with_tgt_length_dataset import LanguagePairWithTgtLengthDataset
 
 EVAL_BLEU_ORDER = 4
 
