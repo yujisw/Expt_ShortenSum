@@ -29,7 +29,7 @@ from torch import Tensor
 
 from fairseq.models.fairseq_encoder import EncoderOut
 
-from differentiable_topk import SortedTopK_custom
+from differentiable_topk import TopK_custom, SortedTopK_custom
 from my_hub_interface import MyHubInterface
 from soft_topk_attention import SoftTopKMultiHeadAttention
 
@@ -108,6 +108,11 @@ class ProposedModel(TransformerModel):
             ],
             default="before_attention",
             help="When the model extracts.",
+        )
+        parser.add_argument(
+            "--sorted-topk",
+            action="store_true",
+            help="Use sorted top-k operator."
         )
 
 
@@ -521,7 +526,12 @@ class Extractor(nn.Module):
             self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
             if self.use_differentiable_topk:
                 logger.info("Use differentiable top-k operator.")
-                self.topk_ope = SortedTopK_custom(epsilon=0.000001, max_iter=200)
+                self.sorted_topk = getattr(args, "sorted_topk", False)
+                if self.sorted_topk:
+                    self.topk_ope = SortedTopK_custom(max_iter=200)
+                else:
+                    self.topk_ope = TopK_custom(max_iter=200)
+                self.topk_eps = 0.001
                 self.extract = self.extract_using_differentiable_topk
             else:
                 logger.info("Use normal top-k operator (not differentiable).")
@@ -548,7 +558,7 @@ class Extractor(nn.Module):
                 self.linear_for_token_scores = quant_noise(
                     nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
                 )
-                self.activation_for_token_scores = nn.Softmax(dim=0)
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
             elif self.token_scoring_fn=="self_attention":
                 self.self_attn_for_token_scores = MultiheadAttention(
                     self.embed_dim,
@@ -565,7 +575,7 @@ class Extractor(nn.Module):
                 self.linear_for_token_scores = quant_noise(
                     nn.Linear(self.embed_dim, 1), p=self.quant_noise, block_size=self.quant_noise_block_size
                 )
-                self.activation_for_token_scores = nn.Softmax(dim=0)
+                # self.activation_for_token_scores = nn.Softmax(dim=0)
 
         self.init_weight()
 
@@ -637,7 +647,7 @@ class Extractor(nn.Module):
             return inner_products
         elif self.token_scoring_fn=="linear":
             x = self.linear_for_token_scores(x).squeeze(-1)
-            x = self.activation_for_token_scores(x)
+            # x = self.activation_for_token_scores(x)
             return x
         elif self.token_scoring_fn=="self_attention":
             residual = x
@@ -659,7 +669,7 @@ class Extractor(nn.Module):
             #     x = self.final_layer_norm(x)
 
             x = self.linear_for_token_scores(x).squeeze(-1) # [seq_len, bsz]
-            x = self.activation_for_token_scores(x) # [seq_len, bsz]
+            # x = self.activation_for_token_scores(x) # [seq_len, bsz]
             return x
 
     def extract_using_normal_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
@@ -706,7 +716,7 @@ class Extractor(nn.Module):
         # get token's scores
         token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
-        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)))
+        topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask, topk_result
@@ -750,6 +760,7 @@ class Extractor(nn.Module):
                 query=x,
                 key=x,
                 value=x,
+                topk_eps=self.topk_eps,
                 key_padding_mask=encoder_padding_mask,
                 attn_mask=attn_mask,
             )

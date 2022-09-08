@@ -15,33 +15,29 @@ CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram
 
 
 @torch.no_grad()
-def generate(bart, infile, desired_length_filepath, outfile="bart_hypo.txt", bsz=1, n_obs=None, **eval_kwargs):
+def generate(bart, infile, fixed_length, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_kwargs):
     count = 1
 
     # if n_obs is not None: bsz = min(bsz, n_obs)
 
-    with open(infile) as source, open(outfile, "w") as fout, open(desired_length_filepath) as desired_length_file:
+    with open(infile) as source, open(outfile, "w") as fout:
         sline = source.readline().strip()
         slines = [sline]
-        desired_length = desired_length_file.readline().strip()
-        desired_lengths = [int(desired_length)]
-        for sline, desired_length in zip(source, desired_length_file):
+        for sline in source:
             if n_obs is not None and count > n_obs:
                 break
             if count % bsz == 0:
-                hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, **eval_kwargs)
+                hypotheses_batch = bart.sample(slines, desired_lengths=[fixed_length for i in range(len(slines))], **eval_kwargs)
                 for hypothesis in hypotheses_batch:
                     fout.write(hypothesis + "\n")
                     fout.flush()
                 slines = []
-                desired_lengths = []
 
             slines.append(sline.strip())
-            desired_lengths.append(int(desired_length))
             count += 1
 
         if slines != []:
-            hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, **eval_kwargs)
+            hypotheses_batch = bart.sample(slines, desired_lengths=[fixed_length for i in range(len(slines))], **eval_kwargs)
             for hypothesis in hypotheses_batch:
                 fout.write(hypothesis + "\n")
                 fout.flush()
@@ -75,7 +71,7 @@ def main():
     parser.add_argument(
         "--out", default="test.hypo", help="where to save summaries", type=str
     )
-    parser.add_argument("--bsz", default=1, help="where to save summaries", type=int)
+    parser.add_argument("--bsz", default=32, help="where to save summaries", type=int)
     parser.add_argument(
         "--n", default=None, help="how many examples to summarize", type=int
     )
@@ -94,7 +90,7 @@ def main():
         help="if true use ProposedModel else BARTModel",
     )
     parser.add_argument(
-        "--desired-length", default="test.oracle", help="desired lengths to summaries", type=str
+        "--fixed-length", default=70, help="fixed length to summaries", type=int
     )
 
     args = parser.parse_args()
@@ -107,8 +103,6 @@ def main():
             checkpoint_file=args.model_file,
             data_name_or_path=args.model_dir,
         )
-        # model.model.encoder.extractor.topk_eps = 1e-5
-        print(model.model.encoder.extractor.topk_eps)
         # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
         # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
     else:
@@ -124,7 +118,7 @@ def main():
     if torch.cuda.is_available():
         model = model.cuda().half()
     generate(
-        model, args.src, args.desired_length, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
+        model, args.src, args.fixed_length, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
     )
 
 
