@@ -337,67 +337,11 @@ class Encoder_Extractor(FairseqEncoder):
         self.encoder = encoder
         self.extractor = extractor
         self.max_tokens = getattr(args, "max_tokens", None)
+        self.use_topk_result = getattr(args, "use_topk_result", False)
 
     def max_positions(self):
         """Return the max input length allowed by the task."""
         return self.max_tokens
-
-    @torch.jit.export
-    def reorder_encoder_out(self, encoder_out: EncoderOut, new_order):
-        """
-        Reorder encoder output according to *new_order*.
-
-        Args:
-            encoder_out: output from the ``forward()`` method
-            new_order (LongTensor): desired order
-
-        Returns:
-            *encoder_out* rearranged according to *new_order*
-        """
-        """
-        Since encoder_padding_mask and encoder_embedding are both of type
-        Optional[Tensor] in EncoderOut, they need to be copied as local
-        variables for Torchscript Optional refinement
-        """
-        encoder_padding_mask: Optional[Tensor] = encoder_out.encoder_padding_mask
-        encoder_embedding: Optional[Tensor] = encoder_out.encoder_embedding
-
-        new_encoder_out = (
-            encoder_out.encoder_out
-            if encoder_out.encoder_out is None
-            else encoder_out.encoder_out.index_select(1, new_order)
-        )
-        new_encoder_padding_mask = (
-            encoder_padding_mask
-            if encoder_padding_mask is None
-            else encoder_padding_mask.index_select(0, new_order)
-        )
-        new_encoder_embedding = (
-            encoder_embedding
-            if encoder_embedding is None
-            else encoder_embedding.index_select(0, new_order)
-        )
-        src_tokens = encoder_out.src_tokens
-        if src_tokens is not None:
-            src_tokens = src_tokens.index_select(0, new_order)
-
-        src_lengths = encoder_out.src_lengths
-        if src_lengths is not None:
-            src_lengths = src_lengths.index_select(0, new_order)
-
-        encoder_states = encoder_out.encoder_states
-        if encoder_states is not None:
-            for idx, state in enumerate(encoder_states):
-                encoder_states[idx] = state.index_select(1, new_order)
-
-        return EncoderOut(
-            encoder_out=new_encoder_out,  # T x B x C
-            encoder_padding_mask=new_encoder_padding_mask,  # B x T
-            encoder_embedding=new_encoder_embedding,  # B x T x C
-            encoder_states=encoder_states,  # List[T x B x C]
-            src_tokens=src_tokens,  # B x T
-            src_lengths=src_lengths,  # B x 1
-        )
 
     def forward_torchscript(self, net_input: Dict[str, Tensor]):
         """A TorchScript-compatible version of forward.
@@ -490,7 +434,7 @@ class Encoder_Extractor(FairseqEncoder):
         )
 
         # ここに提案手法を組み込む
-        extractor_out, new_padding_mask = self.extractor(
+        extractor_out, new_padding_mask, topk_result = self.extractor(
             encoder_out.encoder_out,
             src_tokens,
             encoder_out.encoder_padding_mask,
@@ -504,7 +448,10 @@ class Encoder_Extractor(FairseqEncoder):
             src_tokens=None,
             src_lengths=None,
         )
-        return extractor_out
+        if self.use_topk_result: # NOTE You can use this only for analyzing, not supported for training or generating.
+            return extractor_out, topk_result
+        else:
+            return extractor_out
 
 class Extractor(nn.Module):
     """Encoder layer block.
@@ -574,7 +521,7 @@ class Extractor(nn.Module):
             self.use_differentiable_topk = getattr(args, "use_differentiable_topk", False)
             if self.use_differentiable_topk:
                 logger.info("Use differentiable top-k operator.")
-                self.topk_ope = SortedTopK_custom(epsilon=0.001, max_iter=200)
+                self.topk_ope = SortedTopK_custom(epsilon=0.000001, max_iter=200)
                 self.extract = self.extract_using_differentiable_topk
             else:
                 logger.info("Use normal top-k operator (not differentiable).")
@@ -838,7 +785,7 @@ class Extractor(nn.Module):
         if self.when_to_extract == "after_fc":
             x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
 
-        return x, new_padding_mask
+        return x, new_padding_mask, topk_result
 
 
 class BARTClassificationHead(nn.Module):

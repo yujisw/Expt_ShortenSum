@@ -150,6 +150,26 @@ class MyHubInterface(nn.Module):
         hypos = [v for _, v in sorted(zip(sample["id"].tolist(), hypos))]
         return hypos
 
+    def extract_topk_result(
+        self, tokens: torch.LongTensor, tgt_lengths: torch.LongTensor
+    ) -> torch.Tensor:
+        if tokens.dim() == 1:
+            tokens = tokens.unsqueeze(0)
+        if tokens.size(-1) > min(self.model.max_positions()):
+            raise ValueError(
+                "tokens exceeds maximum length: {} > {}".format(
+                    tokens.size(-1), self.model.max_positions()
+                )
+            )
+        tokens.to(device=self.device),
+
+        extractor_out, topk_result = self.model.encoder(
+            src_tokens=tokens,
+            src_lengths=None,
+            tgt_lengths=tgt_lengths,
+        )
+        return extractor_out, topk_result
+
     def extract_features(
         self, tokens: torch.LongTensor, return_all_hiddens: bool = False
     ) -> torch.Tensor:
