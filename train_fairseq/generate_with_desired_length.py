@@ -12,7 +12,12 @@ from mytask import ProposalTask
 
 XSUM_KWARGS = dict(beam=6, lenpen=1.0, max_len_b=60, min_len=10, no_repeat_ngram_size=3)
 CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram_size=3)
-
+LEAST_KWARGS = dict(beam=4, no_repeat_ngram_size=3)
+BEAM_ARGS={
+    "xsum": XSUM_KWARGS,
+    "cnn": CNN_KWARGS,
+    "least": LEAST_KWARGS,
+}
 
 @torch.no_grad()
 def generate(bart, infile, desired_length_filepath, outfile="bart_hypo.txt", bsz=1, n_obs=None, **eval_kwargs):
@@ -79,12 +84,12 @@ def main():
     parser.add_argument(
         "--n", default=None, help="how many examples to summarize", type=int
     )
-    parser.add_argument(
-        "--xsum-kwargs",
-        action="store_true",
-        default=False,
-        help="if true use XSUM_KWARGS else CNN_KWARGS",
-    )
+    # parser.add_argument(
+    #     "--xsum-kwargs",
+    #     action="store_true",
+    #     default=False,
+    #     help="if true use XSUM_KWARGS else CNN_KWARGS",
+    # )
 
     # Here are the additional arguments.
     parser.add_argument(
@@ -96,9 +101,21 @@ def main():
     parser.add_argument(
         "--desired-length", default="test.oracle", help="desired lengths to summaries", type=str
     )
+    parser.add_argument(
+        "--beam-args",
+        choices=[
+            "xsum",
+            "cnn",
+            "least",
+        ],
+        default="least",
+        help="args for beam search.",
+    )
 
     args = parser.parse_args()
-    eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
+    eval_kwargs = BEAM_ARGS[args.beam_args]
+    # eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
+    print(eval_kwargs)
     if args.model_dir == "pytorch/fairseq":
         model = torch.hub.load("pytorch/fairseq", args.model_file)
     if args.use_proposal:
