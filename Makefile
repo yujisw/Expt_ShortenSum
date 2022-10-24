@@ -222,7 +222,7 @@ generate-proposal-fixed-len:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--fixed-length ${FIXED_LENGTH} \
-		--beam-args ${BEAM_ARGS}
+		--beam-args ${BEAM_ARGS} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}_${BEAM_ARGS}_args
 
 # Before execute this command, execute the command below
