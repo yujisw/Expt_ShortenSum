@@ -209,7 +209,7 @@ generate-proposal:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
-		--beam-args ${BEAM_ARGS}
+		--beam-args ${BEAM_ARGS} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 # Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
