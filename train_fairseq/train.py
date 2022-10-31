@@ -131,7 +131,7 @@ def main(args):
     train_meter = meters.StopwatchMeter()
     train_meter.start()
 
-    topk_eps = 0.001
+    topk_eps = args.init_topk_eps
     trainer.model.encoder.extractor.topk_eps = topk_eps
     logger.info("Initialized SoftTopK's epsilon with {}".format(trainer.model.encoder.extractor.topk_eps))
 
@@ -399,6 +399,8 @@ def cli_main(modify_parser=None):
                        help="Use wandb to monitor training progress")
     parser.add_argument("--topk-eps-decay", action="store_true",
                        help="Apply decay to topk's epsilon")
+    parser.add_argument("--init-topk-eps", default=0.001, type=float, metavar="D",
+                       help="Initial value for the topk's epsilon")
 
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.use_wandb:
