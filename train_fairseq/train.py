@@ -145,9 +145,11 @@ def main(args):
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
-        if args.topk_eps_decay and epoch_itr.next_epoch_idx > 1 and topk_eps > 0.000001:
+        if args.topk_eps_decay and epoch_itr.next_epoch_idx > 1 and topk_eps > args.min_topk_eps:
             # update topk's epsilon
             topk_eps = topk_eps * 0.25
+            if topk_eps < args.min_topk_eps:
+                topk_eps = args.min_topk_eps
             trainer.model.encoder.extractor.topk_eps = topk_eps
             logger.info("Updated topk's epsilon: {}".format(trainer.model.encoder.extractor.topk_eps))
 
@@ -401,6 +403,8 @@ def cli_main(modify_parser=None):
                        help="Apply decay to topk's epsilon")
     parser.add_argument("--init-topk-eps", default=0.001, type=float, metavar="D",
                        help="Initial value for the topk's epsilon")
+    parser.add_argument("--min-topk-eps", default=0.0001, type=float, metavar="D",
+                       help="Minimum value for the topk's epsilon")
 
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.use_wandb:
