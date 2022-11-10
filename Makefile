@@ -13,6 +13,9 @@ PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
+INIT_TOPK_EPS=0.001
+END_TOPK_EPS=0.001
+
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
 OUTPUT_DIR := output
@@ -184,7 +187,7 @@ finetune-proposal-large:
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
-		--sorted-topk \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -210,6 +213,7 @@ generate-proposal:
 		--src data/cnn_dm/${SPLIT}.source \
 		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
 		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 # Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70

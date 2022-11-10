@@ -111,6 +111,12 @@ def main():
         default="least",
         help="args for beam search.",
     )
+    parser.add_argument(
+        "--topk-eps",
+        default=0.001,
+        type=float,
+        metavar="D",
+        help="topk's epsilon")
 
     args = parser.parse_args()
     eval_kwargs = BEAM_ARGS[args.beam_args]
@@ -124,7 +130,7 @@ def main():
             checkpoint_file=args.model_file,
             data_name_or_path=args.model_dir,
         )
-        # model.model.encoder.extractor.topk_eps = 1e-5
+        model.model.encoder.extractor.topk_eps = args.topk_eps
         print(model.model.encoder.extractor.topk_eps)
         # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
         # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
