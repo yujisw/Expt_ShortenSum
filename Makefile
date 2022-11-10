@@ -14,7 +14,7 @@ PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 INIT_TOPK_EPS=0.001
-END_TOPK_EPS=0.001
+MIN_TOPK_EPS=0.001
 
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
