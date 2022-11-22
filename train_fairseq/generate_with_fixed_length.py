@@ -12,7 +12,12 @@ from mytask import ProposalTask
 
 XSUM_KWARGS = dict(beam=6, lenpen=1.0, max_len_b=60, min_len=10, no_repeat_ngram_size=3)
 CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram_size=3)
-
+LEAST_KWARGS = dict(beam=4, no_repeat_ngram_size=3)
+BEAM_ARGS={
+    "xsum": XSUM_KWARGS,
+    "cnn": CNN_KWARGS,
+    "least": LEAST_KWARGS,
+}
 
 @torch.no_grad()
 def generate(bart, infile, fixed_length, outfile="bart_hypo.txt", bsz=32, n_obs=None, **eval_kwargs):
@@ -75,12 +80,12 @@ def main():
     parser.add_argument(
         "--n", default=None, help="how many examples to summarize", type=int
     )
-    parser.add_argument(
-        "--xsum-kwargs",
-        action="store_true",
-        default=False,
-        help="if true use XSUM_KWARGS else CNN_KWARGS",
-    )
+    # parser.add_argument(
+    #     "--xsum-kwargs",
+    #     action="store_true",
+    #     default=False,
+    #     help="if true use XSUM_KWARGS else CNN_KWARGS",
+    # )
 
     # Here are the additional arguments.
     parser.add_argument(
@@ -92,9 +97,27 @@ def main():
     parser.add_argument(
         "--fixed-length", default=70, help="fixed length to summaries", type=int
     )
+    parser.add_argument(
+        "--beam-args",
+        choices=[
+            "xsum",
+            "cnn",
+            "least",
+        ],
+        default="least",
+        help="args for beam search.",
+    )
+    parser.add_argument(
+        "--topk-eps",
+        default=0.001,
+        type=float,
+        metavar="D",
+        help="topk's epsilon")
 
     args = parser.parse_args()
-    eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
+    eval_kwargs = BEAM_ARGS[args.beam_args]
+    # eval_kwargs = XSUM_KWARGS if args.xsum_kwargs else CNN_KWARGS
+    print(eval_kwargs)
     if args.model_dir == "pytorch/fairseq":
         model = torch.hub.load("pytorch/fairseq", args.model_file)
     if args.use_proposal:
@@ -103,6 +126,8 @@ def main():
             checkpoint_file=args.model_file,
             data_name_or_path=args.model_dir,
         )
+        model.model.encoder.extractor.topk_eps = args.topk_eps
+        print(model.model.encoder.extractor.topk_eps)
         # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
         # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
     else:

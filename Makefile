@@ -13,6 +13,9 @@ PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
+INIT_TOPK_EPS=0.001
+MIN_TOPK_EPS=0.001
+
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
 OUTPUT_DIR := output
@@ -22,6 +25,7 @@ TRAIN_DEST_DIR = ${OUTPUT_DIR}/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 LOG_FILE_PATH = log/${OUTPUT_DIR_PREFIX}_${DATE_INFO}.log
 
 SPLIT = test
+BEAM_ARGS = least
 
 # Command Setting
 CUDA_USE_DEVICES := 0
@@ -179,11 +183,11 @@ finetune-proposal-large:
 		--fp16 --update-freq ${UPDATE_FREQ} \
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
-		--validate-interval-updates 200 \
+		--validate-interval-updates 200 --no-epoch-checkpoints \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
-		--sorted-topk \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -208,7 +212,9 @@ generate-proposal:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 # Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
 generate-proposal-fixed-len:
@@ -220,14 +226,15 @@ generate-proposal-fixed-len:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--fixed-length ${FIXED_LENGTH} \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}
+		--beam-args ${BEAM_ARGS} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}_${BEAM_ARGS}_args
 
 # Before execute this command, execute the command below
 # export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 calc-rouge:
-	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized
+	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized
 	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
