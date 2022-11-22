@@ -236,6 +236,19 @@ calc-rouge:
 	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
 	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
 
+# Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
+calc-faithful-score:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX} \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--topk-eps ${MIN_TOPK_EPS}
+
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/params_tuner.py ${INPUT_DATA_DIR} \
