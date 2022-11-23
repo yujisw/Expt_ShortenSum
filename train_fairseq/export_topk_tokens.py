@@ -6,6 +6,7 @@ from mytask import ProposalTask
 @torch.no_grad()
 def get_topk_token_set(model, source, k):
     tokens = model.encode(source)
+    k = min(k, len(tokens))
     desired_length = torch.LongTensor([k])
     if torch.cuda.is_available():
         tokens = tokens.cuda()
