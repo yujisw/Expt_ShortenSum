@@ -229,6 +229,21 @@ generate-proposal-fixed-len:
 		--beam-args ${BEAM_ARGS} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}_${BEAM_ARGS}_args
 
+# Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
+generate-proposal-topk-randperm:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--topk-randperm \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+
 # Before execute this command, execute the command below
 # export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 calc-rouge:

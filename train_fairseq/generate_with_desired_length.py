@@ -116,7 +116,14 @@ def main():
         default=0.001,
         type=float,
         metavar="D",
-        help="topk's epsilon")
+        help="topk's epsilon"
+    )
+    parser.add_argument(
+        "--topk-randperm",
+        action="store_true",
+        default=False,
+        help="if true randomly permutate topk score",
+    )
 
     args = parser.parse_args()
     eval_kwargs = BEAM_ARGS[args.beam_args]
@@ -131,7 +138,9 @@ def main():
             data_name_or_path=args.model_dir,
         )
         model.model.encoder.extractor.topk_eps = args.topk_eps
-        print(model.model.encoder.extractor.topk_eps)
+        print("model's topk_eps:", model.model.encoder.extractor.topk_eps)
+        model.model.encoder.extractor.topk_randperm = args.topk_randperm
+        print("model's topk_randperm:", model.model.encoder.extractor.topk_randperm)
         # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
         # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
     else:
