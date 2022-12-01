@@ -102,12 +102,14 @@ class ProposedModel(TransformerModel):
             "--when-to-extract",
             choices=[
                 "before_attention",
+                "query_before_attention",
+                "key_value_before_attention",
                 "during_attention",
                 "after_attention",
                 "after_fc",
             ],
-            default="before_attention",
-            help="When the model extracts.",
+            default="after_attention",
+            help="When the model calcs topk scores and masks x.",
         )
         parser.add_argument(
             "--sorted-topk",
@@ -751,7 +753,8 @@ class Extractor(nn.Module):
         if attn_mask is not None:
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
-        if self.when_to_extract == "before_attention":
+        init_x = x
+        if "before_attention" in self.when_to_extract:
             x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
         residual = x
 
@@ -772,14 +775,14 @@ class Extractor(nn.Module):
             new_padding_mask = encoder_padding_mask
         else:
             x, _ = self.self_attn(
-                query=x,
-                key=x,
-                value=x,
+                query=init_x if self.when_to_extract == "key_value_before_attention" else x,
+                key=init_x if self.when_to_extract == "query_before_attention" else x,
+                value=init_x if self.when_to_extract == "query_before_attention" else x,
                 key_padding_mask=encoder_padding_mask,
                 attn_mask=attn_mask,
             )
         x = self.dropout_module(x)
-        x = self.residual_connection(x, residual)
+        x = self.residual_connection(x, residual) # TODO init_xにしても良いかも？
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
