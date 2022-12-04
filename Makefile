@@ -1,7 +1,8 @@
 POETRY_RUN := poetry run
 
-TASK=data/cnn_dm
-INPUT_DATA_DIR=data/cnn_dm-bin
+DATASET=cnn_dm
+TEXT_DATA_DIR=data/${DATASET}
+INPUT_DATA_DIR=${TEXT_DATA_DIR}-bin
 TOTAL_NUM_UPDATES=20000
 WARMUP_UPDATES=16
 LR=3e-05
@@ -51,21 +52,28 @@ setup-rouge:
 	wget -N -P data http://nlp.stanford.edu/software/stanford-corenlp-full-2016-10-31.zip
 	unzip data/stanford-corenlp-full-2016-10-31.zip -d data
 
+format-cnndm:
+	@echo Download and Convert CNN/DM data to appropriate format
+	${POETRY_RUN} python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
+
+download-and-format-xsum:
+	@echo Convert XSUM data to appropriate format
+	${POETRY_RUN} python data_utils/get_xsum.py
+
 bpe-preprocess:
-	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
 	@echo BPE preprocess
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
-	bash data_utils/bpe_preprocess.sh
+	bash data_utils/bpe_preprocess.sh ${TEXT_DATA_DIR}
 	@echo Binarize dataset
 	${POETRY_RUN} fairseq-preprocess \
 		--source-lang "source" \
 		--target-lang "target" \
-		--trainpref "${TASK}/train.bpe" \
-		--validpref "${TASK}/val.bpe" \
-		--testpref "${TASK}/test.bpe" \
-		--destdir "${TASK}-bin/" \
+		--trainpref "${TEXT_DATA_DIR}/train.bpe" \
+		--validpref "${TEXT_DATA_DIR}/val.bpe" \
+		--testpref "${TEXT_DATA_DIR}/test.bpe" \
+		--destdir "${INPUT_DATA_DIR}" \
 		--workers 60 \
 		--srcdict data/dict.txt \
 		--tgtdict data/dict.txt;
@@ -78,10 +86,10 @@ split-data-by-length:
 	${POETRY_RUN} fairseq-preprocess \
 		--source-lang "source" \
 		--target-lang "target" \
-		--trainpref "${TASK}/train.-49.bpe" \
-		--validpref "${TASK}/val.-49.bpe" \
-		--testpref "${TASK}/test.-49.bpe" \
-		--destdir "${TASK}.-49-bin/" \
+		--trainpref "${TEXT_DATA_DIR}/train.-49.bpe" \
+		--validpref "${TEXT_DATA_DIR}/val.-49.bpe" \
+		--testpref "${TEXT_DATA_DIR}/test.-49.bpe" \
+		--destdir "${TEXT_DATA_DIR}.-49-bin/" \
 		--workers 60 \
 		--srcdict data/dict.txt \
 		--tgtdict data/dict.txt;
@@ -93,8 +101,9 @@ preprocess-extractor:
 preprocess-proposal:
 	mkdir -p data/bart.extractor.in.encoder.large
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python data_utils/rename_weights_for_proposal.py
-	mkdir -p data/desired_lengths
-	${POETRY_RUN} python data_utils/make_oracle_length_data.py
+
+make_oracle_length_file:
+	${POETRY_RUN} python data_utils/make_oracle_length_data.py --dataset ${DATASET}
 
 finetune-baseline-large:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
@@ -121,7 +130,7 @@ finetune-baseline-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		 --use-wandb \
+		--use-wandb \
 		> ${LOG_FILE_PATH};
 
 # CPUで回す場合はfp16オプションを外す
@@ -212,7 +221,7 @@ generate-proposal:
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
-		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--beam-args ${BEAM_ARGS} \
 		--topk-eps ${MIN_TOPK_EPS} \
 		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args
@@ -239,7 +248,7 @@ generate-proposal-topk-randperm:
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
-		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--beam-args ${BEAM_ARGS} \
 		--topk-eps ${MIN_TOPK_EPS} \
 		--topk-randperm \
@@ -249,13 +258,13 @@ generate-proposal-topk-randperm:
 # export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 calc-rouge:
 	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized
-	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
+	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 calc-rouge-topk-randperm:
 	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized
-	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
 
 # Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
 calc-faithful-score:
@@ -265,7 +274,7 @@ calc-faithful-score:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--gen ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
-		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX} \
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
 		--topk-eps ${MIN_TOPK_EPS}
@@ -277,7 +286,7 @@ calc-faithful-score-topk-randperm:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--gen ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
-		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX}_topk_randperm \
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
 		--topk-eps ${MIN_TOPK_EPS}

@@ -131,9 +131,10 @@ def main(args):
     train_meter = meters.StopwatchMeter()
     train_meter.start()
 
-    topk_eps = args.init_topk_eps
-    trainer.model.encoder.extractor.topk_eps = topk_eps
-    logger.info("Initialized SoftTopK's epsilon with {}".format(trainer.model.encoder.extractor.topk_eps))
+    if args.task == "proposal_task":
+        topk_eps = args.init_topk_eps
+        trainer.model.encoder.extractor.topk_eps = topk_eps
+        logger.info("Initialized SoftTopK's epsilon with {}".format(trainer.model.encoder.extractor.topk_eps))
 
     while lr > args.min_lr and epoch_itr.next_epoch_idx <= max_epoch:
         logger.info("next_epoch_idx: {}".format(epoch_itr.next_epoch_idx))
@@ -145,7 +146,7 @@ def main(args):
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
-        if args.topk_eps_decay and epoch_itr.next_epoch_idx > 1 and topk_eps > args.min_topk_eps:
+        if args.task == "proposal_task" and args.topk_eps_decay and epoch_itr.next_epoch_idx > 1 and topk_eps > args.min_topk_eps:
             # update topk's epsilon
             topk_eps = topk_eps * 0.25
             if topk_eps < args.min_topk_eps:
@@ -249,7 +250,8 @@ def train(args, trainer, task, epoch_itr):
             num_updates = trainer.get_num_updates()
             if num_updates % args.log_interval == 0:
                 stats = get_training_stats(metrics.get_smoothed_values("train_inner"))
-                stats["topk_eps"] = trainer.model.encoder.extractor.topk_eps
+                if args.task == "proposal_task":
+                    stats["topk_eps"] = trainer.model.encoder.extractor.topk_eps
                 progress.log(stats, tag="train_inner", step=num_updates)
                 if args.use_wandb:
                     wandb.log(stats, step=num_updates)
