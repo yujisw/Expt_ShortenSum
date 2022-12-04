@@ -51,13 +51,20 @@ setup-rouge:
 	wget -N -P data http://nlp.stanford.edu/software/stanford-corenlp-full-2016-10-31.zip
 	unzip data/stanford-corenlp-full-2016-10-31.zip -d data
 
+format-cnndm:
+	@echo Download and Convert CNN/DM data to appropriate format
+	${POETRY_RUN} python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
+
+download-and-format-xsum:
+	@echo Convert XSUM data to appropriate format
+	${POETRY_RUN} python data_utils/get_xsum.py
+
 bpe-preprocess:
-	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
 	@echo BPE preprocess
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json'
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/vocab.bpe'
 	wget -N -P data 'https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/dict.txt'
-	bash data_utils/bpe_preprocess.sh
+	bash data_utils/bpe_preprocess.sh ${TASK}
 	@echo Binarize dataset
 	${POETRY_RUN} fairseq-preprocess \
 		--source-lang "source" \
@@ -121,7 +128,7 @@ finetune-baseline-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		 --use-wandb \
+		--use-wandb \
 		> ${LOG_FILE_PATH};
 
 # CPUで回す場合はfp16オプションを外す
