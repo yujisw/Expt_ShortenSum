@@ -47,8 +47,12 @@ setup-rouge:
 	unzip data/stanford-corenlp-full-2016-10-31.zip -d data
 
 format-cnndm:
-	@echo Convert CNN/DM data to appropriate format
-	python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
+	@echo Download and Convert CNN/DM data to appropriate format
+	${POETRY_RUN} python data_utils/make_datafiles.py data/cnn/stories data/dailymail/stories data
+
+download-and-format-xsum:
+	@echo Convert XSUM data to appropriate format
+	${POETRY_RUN} python data_utils/get_xsum.py
 
 bpe-preprocess:
 	@echo BPE preprocess
@@ -119,7 +123,7 @@ finetune-baseline-large:
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
 		--validate-interval-updates 200 \
-		 --use-wandb \
+		--use-wandb \
 		> ${LOG_FILE_PATH};
 
 # CPUで回す場合はfp16オプションを外す
