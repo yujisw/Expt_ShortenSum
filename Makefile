@@ -13,6 +13,9 @@ PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
+INIT_TOPK_EPS=0.001
+MIN_TOPK_EPS=0.001
+
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
 OUTPUT_DIR := output
@@ -22,12 +25,14 @@ TRAIN_DEST_DIR = ${OUTPUT_DIR}/${OUTPUT_DIR_PREFIX}_${DATE_INFO}
 LOG_FILE_PATH = log/${OUTPUT_DIR_PREFIX}_${DATE_INFO}.log
 
 SPLIT = test
+BEAM_ARGS = least
 
 # Command Setting
 CUDA_USE_DEVICES := 0
+PORT_NUMBER := 8888
 
 notebook:
-	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} jupyter lab
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} jupyter lab --port ${PORT_NUMBER}
 
 # If you want to use latest version of pytorch for cu113 or cu114, please use the command below intead of the 3rd line
 # ${POETRY_RUN} pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
@@ -186,11 +191,11 @@ finetune-proposal-large:
 		--fp16 --update-freq ${UPDATE_FREQ} \
 		--skip-invalid-size-inputs-valid-test \
 		--find-unused-parameters \
-		--validate-interval-updates 200 \
+		--validate-interval-updates 200 --no-epoch-checkpoints \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
 		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
-		--sorted-topk \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -215,7 +220,9 @@ generate-proposal:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 # Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
 generate-proposal-fixed-len:
@@ -227,14 +234,60 @@ generate-proposal-fixed-len:
 		--model-file checkpoint_best.pt \
 		--src data/cnn_dm/${SPLIT}.source \
 		--fixed-length ${FIXED_LENGTH} \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}
+		--beam-args ${BEAM_ARGS} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${FIXED_LENGTH}_${BEAM_ARGS}_args
+
+# Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
+generate-proposal-topk-randperm:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
+	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--topk-randperm \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
 
 # Before execute this command, execute the command below
 # export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 calc-rouge:
-	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized
+	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized
 	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
+
+calc-rouge-topk-randperm:
+	cat ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized
+	cat ${TASK}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TASK}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TASK}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+
+# Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
+calc-faithful-score:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX} \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-topk-randperm:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/cnn_dm/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
+		--desired-length data/desired_lengths/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX}_topk_randperm \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
+		--topk-eps ${MIN_TOPK_EPS}
 
 params-tune-proposal-large:
 	${eval OUTPUT_DIR_PREFIX := params-tune-proposal-large}

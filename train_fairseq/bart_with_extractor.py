@@ -514,6 +514,8 @@ class Extractor(nn.Module):
         # The additional arguments below
         self.eos_idx = eos_idx
         logger.info("eos_idx: {}".format(self.eos_idx))
+        
+        self.topk_randperm = getattr(args, "topk_randperm", False)
 
         # settings for the method of extracting
         self.when_to_extract = getattr(args, "when_to_extract", "")
@@ -718,7 +720,10 @@ class Extractor(nn.Module):
         # get indices of top-k high similarity
         topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
-        masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        if self.topk_randperm:
+            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1)[:, torch.randperm(x.size(0))].masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        else:
+            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask, topk_result
 
     def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):
