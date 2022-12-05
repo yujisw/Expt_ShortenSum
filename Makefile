@@ -210,7 +210,8 @@ generate-baseline:
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/${DATASET}/${SPLIT}.source \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo
+		--beam-args ${BEAM_ARGS} \
+		--out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo_${BEAM_ARGS}_args
 
 # Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
 generate-proposal:
