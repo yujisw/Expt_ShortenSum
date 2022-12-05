@@ -9,9 +9,8 @@ def get_topk_token_set(model, source, k, use_proposal):
     tokens = model.encode(source)
     if torch.cuda.is_available():
         tokens = tokens.cuda()
-
+    k = min(k, len(tokens))
     if use_proposal:
-        k = min(k, len(tokens))
         desired_length = torch.LongTensor([k])
         if torch.cuda.is_available():
             desired_length = desired_length.cuda()
