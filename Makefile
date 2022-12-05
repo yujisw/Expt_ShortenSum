@@ -259,12 +259,12 @@ generate-proposal-topk-randperm:
 calc-rouge:
 	cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized
 	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
 
 calc-rouge-topk-randperm:
 	cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized
 	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
 
 # Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
 calc-faithful-score:
@@ -275,8 +275,8 @@ calc-faithful-score:
 		--src data/${DATASET}/${SPLIT}.source \
 		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
-		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX} \
-		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
 		--topk-eps ${MIN_TOPK_EPS}
 
 calc-faithful-score-topk-randperm:
@@ -287,8 +287,8 @@ calc-faithful-score-topk-randperm:
 		--src data/${DATASET}/${SPLIT}.source \
 		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
-		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}.bolded_src${LEN_SUFFIX}_topk_randperm \
-		--score-out ${TRAIN_DEST_DIR}/${SPLIT}.faithful_scores${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_topk_randperm \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
 		--topk-eps ${MIN_TOPK_EPS}
 
 params-tune-proposal-large:
