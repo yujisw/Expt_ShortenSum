@@ -203,7 +203,6 @@ finetune-proposal-large:
 
 # Usage: make generate-baseline TRAIN_DEST_DIR=hogehoge
 generate-baseline:
-	${eval OUTPUT_DIR_PREFIX := generate-baseline}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate.py \
@@ -214,7 +213,6 @@ generate-baseline:
 
 # Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
 generate-proposal:
-	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
@@ -228,7 +226,6 @@ generate-proposal:
 
 # Usage: make generate-proposal-fixed-len TRAIN_DEST_DIR=hogehoge FIXED_LENGTH=70
 generate-proposal-fixed-len:
-	${eval OUTPUT_DIR_PREFIX := generate-proposal-fixed-len}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_fixed_length.py --use-proposal \
@@ -241,7 +238,6 @@ generate-proposal-fixed-len:
 
 # Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
 generate-proposal-topk-randperm:
-	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
@@ -267,8 +263,7 @@ calc-rouge-topk-randperm:
 	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
 
 # Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
-calc-faithful-score:
-	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+calc-faithful-score-baseline:
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
@@ -279,8 +274,18 @@ calc-faithful-score:
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
 		--topk-eps ${MIN_TOPK_EPS}
 
+calc-faithful-score:
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/${DATASET}/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--topk-eps ${MIN_TOPK_EPS}
+
 calc-faithful-score-topk-randperm:
-	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
