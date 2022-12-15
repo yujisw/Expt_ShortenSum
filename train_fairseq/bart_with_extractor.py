@@ -129,6 +129,12 @@ class ProposedModel(TransformerModel):
             default="self_attention",
             help="Token scoring function to use for the Extractor.",
         )
+        parser.add_argument(
+            "--topk-normalization",
+            action="store_true",
+            default=False,
+            help="if true normalize topk_score",
+        )
 
     @property
     def supported_targets(self):
@@ -517,6 +523,7 @@ class Extractor(nn.Module):
         self.eos_idx = eos_idx
         logger.info("eos_idx: {}".format(self.eos_idx))
         
+        self.topk_normalization = getattr(args, "topk_normalization", False)
         self.topk_randperm = getattr(args, "topk_randperm", False)
 
         # settings for the method of extracting
@@ -721,11 +728,18 @@ class Extractor(nn.Module):
         token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
-        # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
+        topk_score = topk_result.sum(axis=-1)
+
+        if self.topk_normalization:
+            topk_norm = topk_score.norm(dim=-1)
+            topk_score = topk_score * topk_norm.reciprocal().unsqueeze(1)
+            topk_score.norm(dim=-1)
+
         if self.topk_randperm:
-            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1)[:, torch.randperm(x.size(0))].masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        else:
-            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+            topk_score = topk_score[:, torch.randperm(x.size(0))]
+
+        # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
+        masked_x = (x.permute(2,1,0) * (topk_score.masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         return masked_x, padding_mask, topk_result
 
     def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):

@@ -197,7 +197,7 @@ finetune-proposal-large:
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 1.0 --beta-for-extract-num 0 \
 		--token-scoring-fn "self_attention" --when-to-extract "after_attention" \
-		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --topk-normalization \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
