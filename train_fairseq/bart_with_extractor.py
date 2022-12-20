@@ -749,10 +749,10 @@ class Extractor(nn.Module):
         masked_x = (x.permute(2,1,0) * (topk_score.masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
         
         if self.normalization_after_soft_masking:
-            masked_x = (masked_x - masked_x.mean(dim=-1).unsqueeze(-1)) \
-                / masked_x.std(dim=-1).unsqueeze(-1) \
-                * x.std(dim=-1).unsqueeze(-1) \
-                + x.mean(dim=-1).unsqueeze(-1)
+            masked_x = ( masked_x - masked_x.mean(dim=[0,2]).view(1, -1, 1) ) \
+                / ( masked_x.std(dim=[0,2]).view(1, -1, 1) + 1e-08 ) \
+                * x.std(dim=[0,2]).view(1, -1, 1) \
+                + x.mean(dim=[0,2]).view(1, -1, 1)
         
         return masked_x, padding_mask, topk_result
 
