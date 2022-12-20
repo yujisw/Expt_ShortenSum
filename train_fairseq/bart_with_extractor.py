@@ -135,6 +135,12 @@ class ProposedModel(TransformerModel):
             default=False,
             help="if true normalize topk_score",
         )
+        parser.add_argument(
+            "--normalization-after-soft-masking",
+            action="store_true",
+            default=False,
+            help="if true normalize the tensor after soft masking with top-k score",
+        )
 
     @property
     def supported_targets(self):
@@ -524,6 +530,7 @@ class Extractor(nn.Module):
         logger.info("eos_idx: {}".format(self.eos_idx))
         
         self.topk_normalization = getattr(args, "topk_normalization", False)
+        self.normalization_after_soft_masking = getattr(args, "normalization_after_soft_masking", False)
         self.topk_randperm = getattr(args, "topk_randperm", False)
 
         # settings for the method of extracting
@@ -740,6 +747,13 @@ class Extractor(nn.Module):
 
         # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
         masked_x = (x.permute(2,1,0) * (topk_score.masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        
+        if self.normalization_after_soft_masking:
+            masked_x = (masked_x - masked_x.mean(dim=-1).unsqueeze(-1)) \
+                / masked_x.std(dim=-1).unsqueeze(-1) \
+                * x.std(dim=-1).unsqueeze(-1) \
+                + x.mean(dim=-1).unsqueeze(-1)
+        
         return masked_x, padding_mask, topk_result
 
     def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):

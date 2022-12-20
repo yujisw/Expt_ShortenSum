@@ -196,8 +196,8 @@ finetune-proposal-large:
 		--validate-interval-updates 200 --no-epoch-checkpoints \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 1.0 --beta-for-extract-num 0 \
-		--token-scoring-fn "self_attention" --when-to-extract "after_attention" \
-		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --topk-normalization \
+		--token-scoring-fn "self_attention" --when-to-extract "query_before_attention" \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --normalization-after-soft-masking \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
