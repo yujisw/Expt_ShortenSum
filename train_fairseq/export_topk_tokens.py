@@ -11,7 +11,7 @@ def get_topk_token_set(model, source, k):
     if torch.cuda.is_available():
         tokens = tokens.cuda()
         desired_length = desired_length.cuda()
-    encoder_out, topk_result = model.extract_topk_result(tokens, desired_length)
+    encoder_out, (topk_result, masked_x, x) = model.extract_topk_result(tokens, desired_length)
     topk_score = topk_result.sum(axis=-1).data[0]
     threshold = sorted(topk_result.sum(dim=-1).ravel())[-k].data
     topk_tokens = [token.item() for token, score in zip(tokens, topk_score) if score >= threshold]
