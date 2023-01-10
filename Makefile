@@ -275,10 +275,10 @@ generate-before-enlightening:
 		--topk-eps ${MIN_TOPK_EPS} \
 		--out ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized > ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.result${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.result${HYPO_SUFFIX}
 
 enlighten-missed-tokens:
-	${POETRY_RUN} python train_fairseq/prepare_enlighten_missed_tokens.py \
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/prepare_enlighten_missed_tokens.py \
 		--train-dest-dir ${TRAIN_DEST_DIR} \
 		--dataset ${DATASET} --beam-args ${BEAM_ARGS} \
 		--miss-threshold ${MISS_THRESHOLD} --max-freq ${MAX_FREQ}
@@ -295,21 +295,21 @@ enlighten-missed-tokens:
 		--topk-eps ${MIN_TOPK_EPS} \
 		--enlighten-width-coef ${ENLIGHTEN_WIDTH_COEF} \
 		--out ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized > ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.result${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.result${HYPO_SUFFIX}
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.result${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.result${HYPO_SUFFIX}
 
 calc-rouge:
 	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized
 	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge --ignore_empty_summary ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
 
 calc-rouge-topk-randperm:
 	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args)
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized
 	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
 
 # Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
 calc-faithful-score:
