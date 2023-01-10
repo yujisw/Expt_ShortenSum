@@ -1,5 +1,6 @@
 import argparse
 import torch
+from fairseq.models.bart import BARTModel
 from bart_with_extractor import ProposedModel
 from mytask import ProposalTask
 
@@ -123,7 +124,8 @@ def main():
         args.gen,
         args.desired_length,
         args.bolded_out,
-        args.score_out
+        args.score_out,
+        use_proposal=args.use_proposal
     )
     print(faithful_score)
 
