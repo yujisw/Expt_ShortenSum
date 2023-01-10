@@ -4,24 +4,27 @@ from bart_with_extractor import ProposedModel
 from mytask import ProposalTask
 
 @torch.no_grad()
-def get_topk_token_set(model, source, k):
+def get_topk_token_set(model, source, k, use_proposal=False):
     tokens = model.encode(source)
     k = min(k, len(tokens))
     desired_length = torch.LongTensor([k])
     if torch.cuda.is_available():
         tokens = tokens.cuda()
         desired_length = desired_length.cuda()
-    encoder_out, (topk_result, masked_x, x) = model.extract_topk_result(tokens, desired_length)
-    topk_score = topk_result.sum(axis=-1).data[0]
-    threshold = sorted(topk_result.sum(dim=-1).ravel())[-k].data
-    topk_tokens = [token.item() for token, score in zip(tokens, topk_score) if score >= threshold]
+    if use_proposal:
+        encoder_out, (features, masked_x, x) = model.extract_topk_result(tokens, desired_length)
+    else:
+        features = model.extract_features(tokens)
+    token_score = features.sum(axis=-1).data[0]
+    threshold = sorted(features.sum(dim=-1).ravel())[-k].data
+    topk_tokens = [token.item() for token, score in zip(tokens, token_score) if score >= threshold]
 
     tokens_str = [model.bpe.decode(
         model.task.source_dictionary.string(torch.tensor([t]))) for t in tokens]
     tokens_str[0] = "[BOS]"
     tokens_str[-1] = "[EOS]"
     tokens_str = [token.replace("\n", "[NewLine]") for token in tokens_str]
-    tokens_str_md = [" **{}**".format(token.replace(" ", "")) if score >= threshold else token for token, score in zip(tokens_str, topk_score)]
+    tokens_str_md = [" **{}**".format(token.replace(" ", "")) if score >= threshold else token for token, score in zip(tokens_str, token_score)]
 
     return set(topk_tokens), "".join(tokens_str_md)
 
@@ -29,7 +32,7 @@ def calc_faithful_score(topk_token_set, gen_token_set, k):
     return len(topk_token_set & gen_token_set) / k
 
 @torch.no_grad()
-def calc_overall_faithful_score(model, src, gen, desired_length_file, bolded_out, score_out):
+def calc_overall_faithful_score(model, src, gen, desired_length_file, bolded_out, score_out, use_proposal=False):
     count = 0
     scores = []
     with open(src) as src, open(gen) as gen, open(desired_length_file) as dl, open(bolded_out, "w") as bolded_out, open(score_out, "w") as score_out:
@@ -53,6 +56,12 @@ def main():
         type=str,
         default="bart.large.cnn/",
         help="path containing model file and src_dict.txt",
+    )
+    parser.add_argument(
+        "--use-proposal",
+        action="store_true",
+        default=False,
+        help="if true use ProposedModel else BARTModel",
     )
     parser.add_argument(
         "--model-file",
@@ -83,15 +92,26 @@ def main():
     )
 
     args = parser.parse_args()
-    model = ProposedModel.from_pretrained(
-        args.model_dir,
-        checkpoint_file=args.model_file,
-        data_name_or_path=args.model_dir,
-    )
-    model.model.encoder.extractor.topk_eps = args.topk_eps
-    print("topk_eps:", model.model.encoder.extractor.topk_eps)
+    if args.use_proposal:
+        model = ProposedModel.from_pretrained(
+            args.model_dir,
+            checkpoint_file=args.model_file,
+            data_name_or_path=args.model_dir,
+        )
+        model.model.encoder.extractor.topk_eps = args.topk_eps
+        print("model's topk_eps:", model.model.encoder.extractor.topk_eps)
+        # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
+        # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
+        model.model.encoder.use_topk_result = True
+    else:
+        model = BARTModel.from_pretrained(
+            args.model_dir,
+            checkpoint_file=args.model_file,
+            data_name_or_path=args.model_dir,
+        )
+        foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
+        model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
 
-    model.model.encoder.use_topk_result = True
     model = model.eval()
 
     if torch.cuda.is_available():
