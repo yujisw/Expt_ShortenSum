@@ -39,7 +39,7 @@ def calc_overall_faithful_score(model, src, gen, desired_length_file, bolded_out
     with open(src) as src, open(gen) as gen, open(desired_length_file) as dl, open(bolded_out, "w") as bolded_out, open(score_out, "w") as score_out:
         for src_line, gen_line, desired_length in zip(src, gen, dl):
             desired_length = int(desired_length)
-            topk_token_set, bolded_src = get_topk_token_set(model, src_line, desired_length)
+            topk_token_set, bolded_src = get_topk_token_set(model, src_line, desired_length, use_proposal=use_proposal)
             bolded_out.write(bolded_src + "\n")
             gen_token_set = set([token.item() for token in model.encode(gen_line)])
             score = calc_faithful_score(topk_token_set, gen_token_set, desired_length)
