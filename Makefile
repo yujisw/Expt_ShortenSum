@@ -299,6 +299,11 @@ enlighten-missed-tokens:
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized
 	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.result${HYPO_SUFFIX}
 
+dataset-rouge:
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.source | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.source.tokenized
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge --ignore_empty_summary ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TEXT_DATA_DIR}/${SPLIT}.source.tokenized > ${TEXT_DATA_DIR}/${SPLIT}.rouge
+
 calc-rouge:
 	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
 	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized
@@ -326,10 +331,11 @@ calc-faithful-score:
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
 		--topk-eps ${MIN_TOPK_EPS}
 
-calc-faithful-score-baseline:
+calc-faithful-score:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--use-proposal \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
 		--src data/${DATASET}/${SPLIT}.source \
@@ -337,6 +343,18 @@ calc-faithful-score-baseline:
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-reference:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src data/${DATASET}/${SPLIT}.source \
+		--gen ${TEXT_DATA_DIR}/${SPLIT}.target \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_target \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores_target \
 		--topk-eps ${MIN_TOPK_EPS}
 
 calc-faithful-score-topk-randperm:
