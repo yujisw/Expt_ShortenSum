@@ -21,6 +21,7 @@ parser.add_argument(
         "xsum",
         "cnn",
         "least",
+        "least_xsum",
     ],
     default="least",
     help="args for beam search.",
@@ -66,15 +67,7 @@ for i in range(len(ref_list)):
         bad_ids.append(i)
 print("bad count:", len(bad_ids))
 
-with open("{}/test_{}_missed{}.source".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as src_missed, \
-open("{}/test_{}_missed{}.oracle".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as oracle_missed, \
-open("{}/test_{}_missed{}.target.tokenized".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as ref_missed, \
-open("{}/test_{}_missed{}.hypo_{}_args.tokenized".format(args.train_dest_dir, args.dataset, args.miss_threshold, args.beam_args), "w") as gen_missed:
-    src_missed.writelines([sent+"\n" for i, sent in enumerate(src_list) if i in bad_ids])
-    oracle_missed.writelines([str(l)+"\n" for i, l in enumerate(oracle_list) if i in bad_ids])
-    ref_missed.writelines([" ".join(tokens)+"\n" for i, tokens in enumerate(ref_list) if i in bad_ids])
-    gen_missed.writelines([" ".join(tokens)+"\n" for i, tokens in enumerate(gen_list) if i in bad_ids])
-
+enlighten_subject_ids = []
 enlighten_indices_list = []
 for data_id in bad_ids:
     # print("id:", data_id)
@@ -100,9 +93,21 @@ for data_id in bad_ids:
     candidate_indices = np.sort(candidate_indices)
     # print("count:", len(candidate_indices), "\n")
     # print(candidate_indices, "\n")
-    enlighten_indices_list.append(candidate_indices)
+    if candidate_indices.any():
+        enlighten_subject_ids.append(data_id)
+        enlighten_indices_list.append(candidate_indices)
 
-assert len(bad_ids) == len(enlighten_indices_list)
+assert len(enlighten_subject_ids) == len(enlighten_indices_list)
 
-with open("{}/test_{}_missed{}_{}.enlighten_indices_{}_args".format(args.train_dest_dir, args.dataset, args.miss_threshold, args.max_freq, args.beam_args), "w") as enlighten_missed:
+with open("{}/test_{}_missed{}.source".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as src_missed, \
+open("{}/test_{}_missed{}.oracle".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as oracle_missed, \
+open("{}/test_{}_missed{}.target.tokenized".format(args.train_dest_dir, args.dataset, args.miss_threshold), "w") as ref_missed, \
+open("{}/test_{}_missed{}.hypo_{}_args.tokenized".format(args.train_dest_dir, args.dataset, args.miss_threshold, args.beam_args), "w") as gen_missed, \
+open("{}/test_{}_missed{}_{}.enlighten_indices_{}_args".format(args.train_dest_dir, args.dataset, args.miss_threshold, args.max_freq, args.beam_args), "w") as enlighten_missed, \
+open("{}/test_{}_missed{}_{}.enlighten_id_{}_args".format(args.train_dest_dir, args.dataset, args.miss_threshold, args.max_freq, args.beam_args), "w") as enlighten_id:
+    src_missed.writelines([sent+"\n" for i, sent in enumerate(src_list) if i in enlighten_subject_ids])
+    oracle_missed.writelines([str(l)+"\n" for i, l in enumerate(oracle_list) if i in enlighten_subject_ids])
+    ref_missed.writelines([" ".join(tokens)+"\n" for i, tokens in enumerate(ref_list) if i in enlighten_subject_ids])
+    gen_missed.writelines([" ".join(tokens)+"\n" for i, tokens in enumerate(gen_list) if i in enlighten_subject_ids])
     enlighten_missed.writelines([" ".join([str(idx) for idx in enlighten_indices])+"\n" for enlighten_indices in enlighten_indices_list])
+    enlighten_id.writelines([str(data_id)+"\n" for data_id in enlighten_subject_ids])

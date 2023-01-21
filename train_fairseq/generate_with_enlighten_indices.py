@@ -47,8 +47,8 @@ def generate(bart, infile, desired_length_filepath, enlighten_indices_filepath, 
                 enlighten_indices_list = []
 
             slines.append(sline.strip())
-            desired_lengths.append(int(desired_length))
-            enlighten_indices_list.append([int(idx) for idx in enlighten_indices.split(" ")])
+            desired_lengths.append(int(desired_length.strip()))
+            enlighten_indices_list.append([int(idx) for idx in enlighten_indices.strip().split(" ")])
             count += 1
 
         if slines != []:
