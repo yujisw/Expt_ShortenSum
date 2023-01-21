@@ -21,7 +21,7 @@ MIN_TOPK_EPS=0.001
 # Args for enlightening
 MISS_THRESHOLD=0.2
 MAX_FREQ=3
-ENLIGHTEN_WIDTH_COEF=1
+ENLIGHTEN_WIDTH_COEF=10
 
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
@@ -355,6 +355,18 @@ calc-faithful-score-baseline:
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
 		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-reference-baseline:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TEXT_DATA_DIR}/${SPLIT}.target \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_target \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores_target \
 		--topk-eps ${MIN_TOPK_EPS}
 
 calc-faithful-score-topk-randperm:
