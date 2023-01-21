@@ -10,7 +10,7 @@ Natural Language Generation, Translation, and Comprehension
 import copy
 import logging
 from typing import List, Dict
-from numpy import extract, inner
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -129,6 +129,18 @@ class ProposedModel(TransformerModel):
             default="self_attention",
             help="Token scoring function to use for the Extractor.",
         )
+        parser.add_argument(
+            "--topk-normalization",
+            action="store_true",
+            default=False,
+            help="if true normalize topk_score",
+        )
+        parser.add_argument(
+            "--normalization-after-soft-masking",
+            action="store_true",
+            default=False,
+            help="if true normalize the tensor after soft masking with top-k score",
+        )
 
     @property
     def supported_targets(self):
@@ -140,6 +152,7 @@ class ProposedModel(TransformerModel):
         src_lengths,
         prev_output_tokens,
         tgt_lengths=None, # [bsz] (the same shape as src_lengths)
+        enlighten_indices_list=None, # bsz list of LongTensor (List[LongTensor])
         features_only=False,
         classification_head_name=None,
         token_embeddings=None,
@@ -152,6 +165,7 @@ class ProposedModel(TransformerModel):
             src_tokens,
             src_lengths=src_lengths,
             tgt_lengths=tgt_lengths,
+            enlighten_indices_list=enlighten_indices_list,
             token_embeddings=token_embeddings,
             **kwargs,
         )
@@ -361,6 +375,7 @@ class Encoder_Extractor(FairseqEncoder):
                 src_tokens=net_input["src_tokens"],
                 src_lengths=net_input["src_lengths"],
                 tgt_lengths=net_input["tgt_lengths"],
+                enlighten_indices_list=net_input["enlighten_indices_list"],
             )
         else:
             return self.forward_non_torchscript(net_input)
@@ -427,6 +442,7 @@ class Encoder_Extractor(FairseqEncoder):
         src_tokens,
         src_lengths,
         tgt_lengths=None, # [bsz] (the same shape as src_lengths)
+        enlighten_indices_list=None, # [bsz, enlighten_indices_num] (LongTensor)
         token_embeddings=None,
         **kwargs,
     ):
@@ -446,6 +462,7 @@ class Encoder_Extractor(FairseqEncoder):
             src_tokens,
             encoder_out.encoder_padding_mask,
             tgt_lengths,
+            enlighten_indices_list=enlighten_indices_list,
         )
         extractor_out = EncoderOut(
             encoder_out=extractor_out,  # T x B x C
@@ -517,7 +534,10 @@ class Extractor(nn.Module):
         self.eos_idx = eos_idx
         logger.info("eos_idx: {}".format(self.eos_idx))
         
+        self.topk_normalization = getattr(args, "topk_normalization", False)
+        self.normalization_after_soft_masking = getattr(args, "normalization_after_soft_masking", False)
         self.topk_randperm = getattr(args, "topk_randperm", False)
+        self.enlighten_width_coef = getattr(args, "enlighten_width_coef", 1)
 
         # settings for the method of extracting
         self.when_to_extract = getattr(args, "when_to_extract", "")
@@ -702,7 +722,7 @@ class Extractor(nn.Module):
         new_padding_mask = torch.bmm(padding_mask.unsqueeze(1).to(x.dtype), binary_extract_matrix).to(torch.bool).squeeze(1)
         return extracted_x, new_padding_mask, topk_high_indices
 
-    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths):
+    def extract_using_differentiable_topk(self, x, src_tokens, padding_mask, attn_mask, tgt_lengths, enlighten_indices_list=None):
         """
         Input:
             x: [seq_len, batch_size, embed_dim]
@@ -721,14 +741,54 @@ class Extractor(nn.Module):
         token_scores = self.get_token_scores(x, src_tokens, padding_mask, attn_mask) # [seq_len, batch_size]
         # get indices of top-k high similarity
         topk_result, _ = self.topk_ope(token_scores.permute(1,0), k=min(extract_num, x.size(0)), epsilon=self.topk_eps)
-        # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
-        if self.topk_randperm:
-            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1)[:, torch.randperm(x.size(0))].masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        else:
-            masked_x = (x.permute(2,1,0) * (topk_result.sum(axis=-1).masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
-        return masked_x, padding_mask, topk_result
+        topk_score = topk_result.sum(axis=-1)
 
-    def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None):
+        if self.topk_normalization:
+            topk_norm = topk_score.norm(dim=-1)
+            topk_score = topk_score * topk_norm.reciprocal().unsqueeze(1)
+
+        if self.topk_randperm:
+            topk_score = topk_score[:, torch.randperm(x.size(0))]
+
+        if enlighten_indices_list is not None:
+            original_topk_score = topk_score.clone().detach()
+            enlighten_indices = enlighten_indices_list[0]
+            ranked_indices = np.argsort(topk_score[0].cpu()).flip(0).tolist()
+            ranks_to_be_changed = []
+            for i in enlighten_indices:
+                rank = np.argwhere(ranked_indices==np.int64(i)).item()
+                ranks_to_be_changed.append(rank)
+
+            ranks_to_be_changed = np.sort(ranks_to_be_changed)[::-1]
+
+            enlighten_width = tgt_lengths.max().item() * self.enlighten_width_coef
+            new_ranked_indices = ranked_indices.copy()
+            for i in range(len(ranks_to_be_changed)):
+                rank = ranks_to_be_changed[i]
+                idx = new_ranked_indices.pop(rank)
+                new_rank = rank - enlighten_width if rank > enlighten_width else 1
+                new_ranked_indices.insert(new_rank, idx)
+                ranks_to_be_changed = [r+1 if new_rank <= r else r for r in ranks_to_be_changed]
+            
+            print("k: {}, enlightened in topk count: {}.".format(tgt_lengths.max().item(), len(set(enlighten_indices) & set(new_ranked_indices[:tgt_lengths.max().item()]))))
+                                
+            original_topk_score = topk_score.clone()
+            for r, new_r in zip(ranked_indices, new_ranked_indices):
+                if r != new_r:
+                    topk_score[0][new_r] = original_topk_score[0][r]
+            
+        # calculate extracted token vecs (Note: topk_result of padding tokens are replaced into 0.)
+        masked_x = (x.permute(2,1,0) * (topk_score.masked_fill(padding_mask, 0.))).permute(2,1,0).to(x.dtype) # x:[B, C, L], bem:[B, L, extract_num] = [B, C, extract_num]
+        
+        if self.normalization_after_soft_masking:
+            masked_x = ( masked_x - masked_x.mean(dim=[0,2]).view(1, -1, 1) ) \
+                / ( masked_x.std(dim=[0,2]).view(1, -1, 1) + 1e-08 ) \
+                * x.std(dim=[0,2]).view(1, -1, 1) \
+                + x.mean(dim=[0,2]).view(1, -1, 1)
+        
+        return masked_x, padding_mask, (topk_result, masked_x, x)
+
+    def forward(self, x, src_tokens, encoder_padding_mask, tgt_lengths, attn_mask: Optional[Tensor] = None, enlighten_indices_list=None):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -741,6 +801,7 @@ class Extractor(nn.Module):
                 embedding for `tgt_i`, we exclude (mask out) `src_j`. This is
                 useful for strided self-attention.
             tgt_lengths (LongTensor): long tensor of shape `(batch).`
+            enlighten_indices_list (List[List[int]]): list of long tensor.
 
         Returns:
             encoded output of shape `(extract_num, batch, embed_dim)`
@@ -755,7 +816,7 @@ class Extractor(nn.Module):
 
         init_x = x
         if "before_attention" in self.when_to_extract:
-            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths, enlighten_indices_list=enlighten_indices_list)
         residual = x
 
         # argsみたらFalseだったからこれはコメントアウト。
@@ -787,7 +848,7 @@ class Extractor(nn.Module):
             x = self.self_attn_layer_norm(x)
 
         if self.when_to_extract == "after_attention":
-            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths, enlighten_indices_list=enlighten_indices_list)
         residual = x
         # argsみたらFalseだったからこれはコメントアウト。
         # if self.normalize_before:
@@ -802,7 +863,7 @@ class Extractor(nn.Module):
             x = self.final_layer_norm(x)
 
         if self.when_to_extract == "after_fc":
-            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths)
+            x, new_padding_mask, topk_result = self.extract(x, src_tokens, encoder_padding_mask, attn_mask, tgt_lengths, enlighten_indices_list=enlighten_indices_list)
 
         return x, new_padding_mask, topk_result
 

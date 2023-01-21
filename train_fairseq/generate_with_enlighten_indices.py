@@ -22,33 +22,37 @@ BEAM_ARGS={
 }
 
 @torch.no_grad()
-def generate(bart, infile, desired_length_filepath, outfile="bart_hypo.txt", bsz=1, n_obs=None, **eval_kwargs):
+def generate(bart, infile, desired_length_filepath, enlighten_indices_filepath, outfile="bart_hypo.txt", bsz=1, n_obs=None, **eval_kwargs):
     count = 1
 
     # if n_obs is not None: bsz = min(bsz, n_obs)
 
-    with open(infile) as source, open(outfile, "w") as fout, open(desired_length_filepath) as desired_length_file:
+    with open(infile) as source, open(outfile, "w") as fout, open(desired_length_filepath) as desired_length_file, open(enlighten_indices_filepath) as enlighten_indices_file:
         sline = source.readline().strip()
         slines = [sline]
         desired_length = desired_length_file.readline().strip()
         desired_lengths = [int(desired_length)]
-        for sline, desired_length in zip(source, desired_length_file):
+        enlighten_indices = enlighten_indices_file.readline().strip()
+        enlighten_indices_list = [[int(idx) for idx in enlighten_indices.split(" ")]]
+        for sline, desired_length, enlighten_indices in zip(source, desired_length_file, enlighten_indices_file):
             if n_obs is not None and count > n_obs:
                 break
             if count % bsz == 0:
-                hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, **eval_kwargs)
+                hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, enlighten_indices_list=enlighten_indices_list, **eval_kwargs)
                 for hypothesis in hypotheses_batch:
                     fout.write(hypothesis + "\n")
                     fout.flush()
                 slines = []
                 desired_lengths = []
+                enlighten_indices_list = []
 
             slines.append(sline.strip())
-            desired_lengths.append(int(desired_length))
+            desired_lengths.append(int(desired_length.strip()))
+            enlighten_indices_list.append([int(idx) for idx in enlighten_indices.strip().split(" ")])
             count += 1
 
         if slines != []:
-            hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, **eval_kwargs)
+            hypotheses_batch = bart.sample(slines, desired_lengths=desired_lengths, enlighten_indices_list=enlighten_indices_list, **eval_kwargs)
             for hypothesis in hypotheses_batch:
                 fout.write(hypothesis + "\n")
                 fout.flush()
@@ -104,6 +108,9 @@ def main():
         "--desired-length", default="test.oracle", help="desired lengths to summaries", type=str
     )
     parser.add_argument(
+        "--enlighten-indices", default="test.target", help="enlighten indices summaries", type=str
+    )
+    parser.add_argument(
         "--beam-args",
         choices=[
             "xsum",
@@ -127,6 +134,12 @@ def main():
         default=False,
         help="if true randomly permutate topk score",
     )
+    parser.add_argument(
+        "--enlighten-width-coef",
+        default=1,
+        help="the coefficient of the width when rewriting the rank of tokens to be enlightened.",
+        type=int,
+    )
 
     args = parser.parse_args()
     eval_kwargs = BEAM_ARGS[args.beam_args]
@@ -144,6 +157,8 @@ def main():
         print("model's topk_eps:", model.model.encoder.extractor.topk_eps)
         model.model.encoder.extractor.topk_randperm = args.topk_randperm
         print("model's topk_randperm:", model.model.encoder.extractor.topk_randperm)
+        model.model.encoder.extractor.enlighten_width_coef = args.enlighten_width_coef
+        print("model's enlighten_width_coef:", model.model.encoder.extractor.enlighten_width_coef)
         # foo = torch.hub.load("pytorch/fairseq", "transformer.wmt16.en-de", checkpoint_file="model.pt",  tokenizer="moses", bpe="subword_nmt")
         # model.task.build_dataset_for_inference = foo.task.build_dataset_for_inference
     else:
@@ -159,7 +174,7 @@ def main():
     if torch.cuda.is_available():
         model = model.cuda().half()
     generate(
-        model, args.src, args.desired_length, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
+        model, args.src, args.desired_length, args.enlighten_indices, bsz=args.bsz, n_obs=args.n, outfile=args.out, **eval_kwargs
     )
 
 

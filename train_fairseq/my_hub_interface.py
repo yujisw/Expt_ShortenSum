@@ -104,10 +104,13 @@ class MyHubInterface(nn.Module):
         return sample
 
     def sample(
-        self, sentences: List[str], desired_lengths: List[int], beam: int = 1, verbose: bool = False, **kwargs
+        self, sentences: List[str], desired_lengths: List[int], enlighten_indices_list: List[List[int]] = None, beam: int = 1, verbose: bool = False, **kwargs
     ) -> str:
         input = [self.encode(sentence) for sentence in sentences]
-        hypos = self.generate(input, desired_lengths, beam, verbose, **kwargs)
+        if enlighten_indices_list is None:
+            hypos = self.generate(input, desired_lengths, beam, verbose, **kwargs)
+        else:
+            hypos = self.generate(input, desired_lengths, beam, verbose, enlighten_indices_list=enlighten_indices_list, **kwargs)
         return [self.decode(x["tokens"]) for x in hypos]
 
     def generate(
@@ -116,12 +119,16 @@ class MyHubInterface(nn.Module):
         desired_lengths: List[int],
         beam: int = 5,
         verbose: bool = False,
+        enlighten_indices_list: List[List[int]] = None,
         **kwargs
     ) -> torch.LongTensor:
         sample = self._build_sample(tokens)
 
         # Adding desired_length to net_input.
         sample["net_input"]["tgt_lengths"] = torch.LongTensor(desired_lengths).to(self.device)
+        if enlighten_indices_list is not None:
+            # sample["net_input"]["enlighten_indices_list"] = [torch.LongTensor(enlighten_indices).to(self.device) for enlighten_indices in enlighten_indices_list]
+            sample["net_input"]["enlighten_indices_list"] = enlighten_indices_list
 
         # build generator using current args as well as any kwargs
         gen_args = copy.copy(self.args)

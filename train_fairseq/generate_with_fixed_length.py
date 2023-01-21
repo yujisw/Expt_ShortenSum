@@ -13,10 +13,12 @@ from mytask import ProposalTask
 XSUM_KWARGS = dict(beam=6, lenpen=1.0, max_len_b=60, min_len=10, no_repeat_ngram_size=3)
 CNN_KWARGS = dict(beam=4, lenpen=2.0, max_len_b=140, min_len=55, no_repeat_ngram_size=3)
 LEAST_KWARGS = dict(beam=4, no_repeat_ngram_size=3)
+LEAST_XSUM_KWARGS = dict(beam=6, no_repeat_ngram_size=3)
 BEAM_ARGS={
     "xsum": XSUM_KWARGS,
     "cnn": CNN_KWARGS,
     "least": LEAST_KWARGS,
+    "least_xsum": LEAST_XSUM_KWARGS,
 }
 
 @torch.no_grad()
@@ -103,6 +105,7 @@ def main():
             "xsum",
             "cnn",
             "least",
+            "least_xsum",
         ],
         default="least",
         help="args for beam search.",

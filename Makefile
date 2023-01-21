@@ -1,4 +1,5 @@
 POETRY_RUN := poetry run
+EXPORT_CORENLP := export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
 
 DATASET=cnn_dm
 TEXT_DATA_DIR=data/${DATASET}
@@ -16,6 +17,11 @@ PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
 INIT_TOPK_EPS=0.001
 MIN_TOPK_EPS=0.001
+
+# Args for enlightening
+MISS_THRESHOLD=0.2
+MAX_FREQ=3
+ENLIGHTEN_WIDTH_COEF=10
 
 # Output data path
 DATE_INFO := $(shell date +'%Y%m%d%H%M%S')
@@ -196,8 +202,8 @@ finetune-proposal-large:
 		--validate-interval-updates 200 --no-epoch-checkpoints \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 1.0 --beta-for-extract-num 0 \
-		--token-scoring-fn "self_attention" --when-to-extract "after_attention" \
-		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} \
+		--token-scoring-fn "self_attention" --when-to-extract "query_before_attention" \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --normalization-after-soft-masking \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -243,6 +249,7 @@ generate-proposal-fixed-len:
 # Usage: make generate-proposal TRAIN_DEST_DIR=hogehoge
 generate-proposal-topk-randperm:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args)
 	cp ${INPUT_DATA_DIR}/dict.source.txt ${TRAIN_DEST_DIR}/
 	cp ${INPUT_DATA_DIR}/dict.target.txt ${TRAIN_DEST_DIR}/
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
@@ -253,43 +260,127 @@ generate-proposal-topk-randperm:
 		--beam-args ${BEAM_ARGS} \
 		--topk-eps ${MIN_TOPK_EPS} \
 		--topk-randperm \
-		--out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+		--out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}
 
-# Before execute this command, execute the command below
-# export CLASSPATH=data/stanford-corenlp-full-2016-10-31/stanford-corenlp-3.7.0.jar
+generate-before-enlightening:
+	$(eval MISSED_PREFIX := ${SPLIT}_${DATASET}_missed${MISS_THRESHOLD})
+	$(eval UNMODIFIED_PREFIX := ${MISSED_PREFIX}_unmodified)
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_desired_length.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.source \
+		--desired-length ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.oracle${LEN_SUFFIX} \
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--out ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}
+	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${UNMODIFIED_PREFIX}.result${HYPO_SUFFIX}
+
+enlighten-missed-tokens:
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/prepare_enlighten_missed_tokens.py \
+		--train-dest-dir ${TRAIN_DEST_DIR} \
+		--dataset ${DATASET} --beam-args ${BEAM_ARGS} \
+		--miss-threshold ${MISS_THRESHOLD} --max-freq ${MAX_FREQ}
+	$(eval MISSED_PREFIX := ${SPLIT}_${DATASET}_missed${MISS_THRESHOLD})
+	$(eval MODIFIED_PREFIX := ${MISSED_PREFIX}_${MAX_FREQ}_${ENLIGHTEN_WIDTH_COEF}_modified)
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/generate_with_enlighten_indices.py --use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.source \
+		--desired-length ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.oracle${LEN_SUFFIX} \
+		--enlighten-indices ${TRAIN_DEST_DIR}/${MISSED_PREFIX}_${MAX_FREQ}.enlighten_indices_${BEAM_ARGS}_args \
+		--beam-args ${BEAM_ARGS} \
+		--topk-eps ${MIN_TOPK_EPS} \
+		--enlighten-width-coef ${ENLIGHTEN_WIDTH_COEF} \
+		--out ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.result${HYPO_SUFFIX}
+	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized
+	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${MISSED_PREFIX}.target.tokenized ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${MODIFIED_PREFIX}.result${HYPO_SUFFIX}
+
+dataset-rouge:
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.source | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.source.tokenized
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge --ignore_empty_summary ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TEXT_DATA_DIR}/${SPLIT}.source.tokenized > ${TEXT_DATA_DIR}/${SPLIT}.rouge
+
 calc-rouge:
-	cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized
-	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${LEN_SUFFIX}_${BEAM_ARGS}_args
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
+	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge --ignore_empty_summary ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
 
 calc-rouge-topk-randperm:
-	cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized
-	cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
-	${POETRY_RUN} files2rouge ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args.tokenized ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args)
+	${EXPORT_CORENLP} && cat ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized
+	${EXPORT_CORENLP} && cat ${TEXT_DATA_DIR}/${SPLIT}.target | java edu.stanford.nlp.process.PTBTokenizer -ioFileList -preserveLines > ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized
+	${POETRY_RUN} files2rouge ${TEXT_DATA_DIR}/${SPLIT}.target.tokenized ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX}.tokenized > ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.result${HYPO_SUFFIX}
 
 # Usage: make calc-faithful-score TRAIN_DEST_DIR=hogehoge
 calc-faithful-score:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-reference:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TEXT_DATA_DIR}/${SPLIT}.target \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_target \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores_target \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-baseline:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_${BEAM_ARGS}_args)
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
-		--src data/${DATASET}/${SPLIT}.source \
-		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} \
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX} \
-		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_${BEAM_ARGS}_args \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
 		--topk-eps ${MIN_TOPK_EPS}
 
-calc-faithful-score-topk-randperm:
+calc-faithful-score-reference-baseline:
 	${eval OUTPUT_DIR_PREFIX := generate-proposal}
 	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
 		--model-dir ${TRAIN_DEST_DIR} \
 		--model-file checkpoint_best.pt \
-		--src data/${DATASET}/${SPLIT}.source \
-		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TEXT_DATA_DIR}/${SPLIT}.target \
+		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
+		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_target \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores_target \
+		--topk-eps ${MIN_TOPK_EPS}
+
+calc-faithful-score-topk-randperm:
+	${eval OUTPUT_DIR_PREFIX := generate-proposal}
+	$(eval HYPO_SUFFIX := ${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args)
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/export_topk_tokens.py \
+		--use-proposal \
+		--model-dir ${TRAIN_DEST_DIR} \
+		--model-file checkpoint_best.pt \
+		--src ${TEXT_DATA_DIR}/${SPLIT}.source \
+		--gen ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.hypo${HYPO_SUFFIX} \
 		--desired-length data/desired_lengths/${DATASET}/${SPLIT}.oracle${LEN_SUFFIX} \
 		--bolded-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.bolded_src${LEN_SUFFIX}_topk_randperm \
-		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${LEN_SUFFIX}_topk_randperm_${BEAM_ARGS}_args \
+		--score-out ${TRAIN_DEST_DIR}/${SPLIT}_${DATASET}.faithful_scores${HYPO_SUFFIX} \
 		--topk-eps ${MIN_TOPK_EPS}
 
 params-tune-proposal-large:
