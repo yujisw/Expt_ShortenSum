@@ -15,6 +15,7 @@ PRETRAINED_LARGE_PATH_FOR_EXTRACTOR=data/bart.with.extractor.large/model.pt
 PRETRAINED_LARGE_PATH_FOR_PROPOSAL=data/bart.extractor.in.encoder.large/model.pt
 PRETRAINED_LARGE_CNN_PATH=data/bart.large.cnn/model.pt
 
+SUMTOPK_CONFIG=query_before_attention
 INIT_TOPK_EPS=0.001
 MIN_TOPK_EPS=0.001
 
@@ -169,7 +170,7 @@ finetune-proposal-large-on-cpu:
 		--validate-interval-updates 200 \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 5.0 --beta-for-extract-num 50 \
-		--token-scoring-fn "self_attention" --when-to-extract "before_attention" \
+		--token-scoring-fn "self_attention" --when-to-extract ${SUMTOPK_CONFIG} \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
 
@@ -202,7 +203,41 @@ finetune-proposal-large:
 		--validate-interval-updates 200 --no-epoch-checkpoints \
 		--use-differentiable-topk \
 		--apply-formula-to-extract-num --alpha-for-extract-num 1.0 --beta-for-extract-num 0 \
-		--token-scoring-fn "self_attention" --when-to-extract "query_before_attention" \
+		--token-scoring-fn "self_attention" --when-to-extract ${SUMTOPK_CONFIG} \
+		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --normalization-after-soft-masking \
+		--use-wandb \
+		> ${LOG_FILE_PATH};
+
+finetune-proposal-large-normalize:
+	${eval OUTPUT_DIR_PREFIX := finetune-proposal-large}
+	CUDA_VISIBLE_DEVICES=${CUDA_USE_DEVICES} ${POETRY_RUN} python train_fairseq/train.py ${INPUT_DATA_DIR} \
+		--save-dir ${TRAIN_DEST_DIR} \
+		--no-progress-bar --log-interval 20 --log-format simple \
+		--restore-file ${PRETRAINED_LARGE_PATH_FOR_PROPOSAL} \
+		--max-tokens ${MAX_TOKENS} \
+		--task proposal_task \
+		--source-lang source --target-lang target \
+		--truncate-source \
+		--layernorm-embedding \
+		--share-all-embeddings \
+		--share-decoder-input-output-embed \
+		--reset-optimizer --reset-dataloader --reset-meters \
+		--required-batch-size-multiple 1 \
+		--user-dir train_fairseq \
+		--arch proposed_model_large \
+		--criterion label_smoothed_cross_entropy \
+		--label-smoothing 0.1 \
+		--dropout 0.1 --attention-dropout 0.1 \
+		--weight-decay 0.01 --optimizer adam --adam-betas "(0.9, 0.999)" --adam-eps 1e-08 \
+		--clip-norm 0.1 \
+		--lr-scheduler polynomial_decay --lr ${LR} --total-num-update ${TOTAL_NUM_UPDATES} --warmup-updates ${WARMUP_UPDATES} \
+		--fp16 --update-freq ${UPDATE_FREQ} \
+		--skip-invalid-size-inputs-valid-test \
+		--find-unused-parameters \
+		--validate-interval-updates 200 --no-epoch-checkpoints \
+		--use-differentiable-topk \
+		--apply-formula-to-extract-num --alpha-for-extract-num 1.0 --beta-for-extract-num 0 \
+		--token-scoring-fn "self_attention" --when-to-extract ${SUMTOPK_CONFIG} \
 		--sorted-topk --init-topk-eps ${INIT_TOPK_EPS} --normalization-after-soft-masking \
 		--use-wandb \
 		> ${LOG_FILE_PATH};
