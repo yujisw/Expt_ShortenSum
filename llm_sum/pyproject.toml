@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "llm_sum"
+version = "0.1.0"
+description = ""
+authors = ["yujisw <yuji.1277@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+openai = "^0.27.7"
+jupyter = "^1.0.0"
+absl-py = "^1.4.0"
+nltk = "^3.8.1"
+numpy = "^1.24.3"
+six = ">=1.14"
+rouge-score = "^0.1.2"
+tiktoken = "^0.4.0"
+pandas = "^2.0.2"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
