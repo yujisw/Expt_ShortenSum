@@ -32,6 +32,12 @@ def _parse_args():
         help='Path to output csv file.',
     )
     parser.add_argument(
+        '--log_file_path',
+        type=str,
+        default='output.log',
+        help='Path to output log file.',
+    )
+    parser.add_argument(
         '--logging_level',
         type=str,
         default='warning',
@@ -196,11 +202,6 @@ def create_prompt(
     logging.debug(f'user:\n{user_content_str}')
 
     prompt_length = num_tokens_from_messages(prompt)
-    max_tokens = _MODEL_MAX_TOKENS - prompt_length
-    logging.info(
-        f'The prompt has {prompt_length} tokens.'
-        f'So, MAX_TOKENS is {max_tokens}.'
-    )
     return system_content_str, user_content_str, prompt_length
 
 
@@ -210,6 +211,7 @@ def generate_summary(
     user_content_str: str,
     prompt_length: int
 ) -> str:
+    response = None
     for i in range(10):
         try:
             response = openai.ChatCompletion.create(
@@ -222,22 +224,28 @@ def generate_summary(
                 max_tokens=_MODEL_MAX_TOKENS-prompt_length,
             )
         except openai.error.RateLimitError:
-            logging.warning(
+            logging.info(
                 f'TEST_DATA_ID: {test_data_id}, '
                 f'({i}/10) Rate limit exceeded.'
             )
             time.sleep(10)
         except Exception as e:
             logging.warning(f'TEST_DATA_ID: {test_data_id}, ({i}/10) {e}')
-            return None
         else:
             break
+
+    if response is None:
+        logging.error(
+            f'TEST_DATA_ID: {test_data_id}, '
+            'Failed to generate a response.'
+        )
+        return None
 
     logging.debug(f'{response["usage"]["total_tokens"]} tokens used.')
     if response["choices"][0]["finish_reason"] != "stop":
         logging.warning(
-            f'TEST_DATA_ID: {test_data_id}\n'
-            f'finish_reason: {response["choices"][0]["finish_reason"]}.\n'
+            f'TEST_DATA_ID: {test_data_id}, '
+            f'finish_reason: {response["choices"][0]["finish_reason"]}. '
             'The response does not seem to be finished successfully.'
         )
 
@@ -261,7 +269,10 @@ def _rouge_score_to_list(rouge_score: dict[str, scoring.Score]) -> list[str]:
 def _main() -> None:
     args = _parse_args()
 
-    logging.basicConfig(level=_LOGGING_LEVEL_DICT[args.logging_level])
+    logging.basicConfig(
+        filename=args.log_file_path,
+        level=_LOGGING_LEVEL_DICT[args.logging_level]
+    )
 
     set_openai_credentials(
         api_key_path='.credentials/api_key',
@@ -311,42 +322,44 @@ def _main() -> None:
             desired_length = len(test_target_text.split(' '))
 
             for i in range(100):
-                try:
-                    example_train_data_id = random.randint(0, train_data_num-1)
-                    logging.info(
-                        f'train data id randomly chosen: '
-                        f'{example_train_data_id}'
+                example_train_data_id = random.randint(0, train_data_num-1)
+                logging.info(
+                    f'train data id randomly chosen: '
+                    f'{example_train_data_id}'
+                )
+
+                example_source_text = train_source_list[
+                    example_train_data_id
+                ].strip()
+                example_summary_text = train_target_list[
+                    example_train_data_id
+                ].strip()
+
+                # generate prompt
+                system_content_str, user_content_str, prompt_length = \
+                    create_prompt(
+                        source_test=test_source_text,
+                        specify_length=desired_length,
+                        use_task_description=True,
+                        few_shot=True,
+                        example_source_text=example_source_text,
+                        example_summary_text=example_summary_text,
                     )
 
-                    example_source_text = train_source_list[
-                        example_train_data_id
-                    ].strip()
-                    example_summary_text = train_target_list[
-                        example_train_data_id
-                    ].strip()
-
-                    # generate prompt
-                    system_content_str, user_content_str, prompt_length = \
-                        create_prompt(
-                            source_test=test_source_text,
-                            specify_length=desired_length,
-                            use_task_description=True,
-                            few_shot=True,
-                            example_source_text=example_source_text,
-                            example_summary_text=example_summary_text,
-                        )
-                    required_length = max(200, desired_length * 2)
-                    if required_length > _MODEL_MAX_TOKENS:
-                        raise ValueError(
-                            f'TEST_DATA_ID: {test_data_id}, '
-                            f'prompt_length: {prompt_length}, '
-                            f'desired_length: {desired_length}, '
-                            f'_MODEL_MAX_TOKENS: {_MODEL_MAX_TOKENS}'
-                        )
-                except ValueError as e:
-                    logging.warning(f'TEST_DATA_ID: {test_data_id}, {e}')
-                else:
+                # check the prompt length is not too long for the model
+                required_length = prompt_length \
+                    + max(200, desired_length * 2)
+                if required_length < _MODEL_MAX_TOKENS:
                     break
+                else:
+                    # if the prompt is too long, try again
+                    logging.warning(
+                        f'TEST_DATA_ID: {test_data_id}, ({i}/100) '
+                        'The prompt is too long. Creating a new prompt. '
+                        f'(prompt_length: {prompt_length}, '
+                        f'desired_length: {desired_length}, '
+                        f'_MODEL_MAX_TOKENS: {_MODEL_MAX_TOKENS})'
+                    )
 
             # generate summary
             openai_summary = generate_summary(
@@ -397,6 +410,8 @@ def _main() -> None:
             f'TEST_DATA_ID: {test_data_id}, {e}\n'
             'An error occurred. Saving results so far.'
         )
+    except KeyboardInterrupt:
+        logging.info('KeyboardInterrupt. Saving results so far.')
 
     # save results in args.output_csv_path
     with open(args.output_csv_path, 'a') as f:
